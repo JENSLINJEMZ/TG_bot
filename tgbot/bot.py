@@ -69,36 +69,36 @@ class Modes(StatesGroup):
 
 HELP_TEXT = (
     "What can I do:\n"
-    "- combine a cutout onto another photo\n"
-    "- change a person's cloth color\n"
-    "- restyle an outfit from a text prompt\n"
-    "- chat with a small local model\n\n"
+    "🧩 combine a cutout onto another photo\n"
+    "👕 change a person's cloth color\n"
+    "✨ restyle an outfit from a text prompt\n"
+    "💬 chat with a small local model\n\n"
     "Use /menu to pick an operation. A photo with a color caption (\"navy\", "
     "\"#ff8800\", \"gradient red blue\", \"transparent\") still works directly.\n\n"
     "Commands:\n"
-    "/menu - choose an operation\n"
-    "/cancel - stop the current operation\n"
-    "/help - this message"
+    "🎨 /menu - choose an operation\n"
+    "🛑 /cancel - stop the current operation\n"
+    "❓ /help - this message"
 )
 
 
 BOT_COMMANDS = [
-    BotCommand(command="start", description="Welcome and the operation menu"),
-    BotCommand(command="menu", description="Pick an operation (combine, cloth, restyle, chat)"),
-    BotCommand(command="help", description="What this bot can do"),
-    BotCommand(command="cancel", description="Stop the current operation"),
+    BotCommand(command="start", description="👋 Welcome and the operation menu"),
+    BotCommand(command="menu", description="🎨 Pick an operation (combine, cloth, restyle, chat)"),
+    BotCommand(command="help", description="❓ What this bot can do"),
+    BotCommand(command="cancel", description="🛑 Stop the current operation"),
 ]
 
 
 def menu_keyboard(compact: bool = False) -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(text="Combine images", callback_data="mode_combine")],
-        [InlineKeyboardButton(text="Change cloth", callback_data="mode_cloth")],
-        [InlineKeyboardButton(text="Restyle outfit (prompt)", callback_data="mode_restyle")],
-        [InlineKeyboardButton(text="Chat", callback_data="mode_chat")],
+        [InlineKeyboardButton(text="🧩 Combine images", callback_data="mode_combine")],
+        [InlineKeyboardButton(text="👕 Change cloth", callback_data="mode_cloth")],
+        [InlineKeyboardButton(text="✨ Restyle outfit", callback_data="mode_restyle")],
+        [InlineKeyboardButton(text="💬 Chat", callback_data="mode_chat")],
     ]
     if compact:
-        buttons.append([InlineKeyboardButton(text="Open menu", callback_data="menu")])
+        buttons.append([InlineKeyboardButton(text="📋 Open menu", callback_data="menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -192,7 +192,7 @@ async def _store_uploads(
 async def cmd_start(message: Message) -> None:
     if not _authorized(message):
         return
-    await message.answer("Pick an operation:", reply_markup=menu_keyboard())
+    await message.answer("Pick an operation 👇", reply_markup=menu_keyboard())
 
 
 @dp.message(Command("menu"))
@@ -200,7 +200,7 @@ async def cmd_menu(message: Message, state: FSMContext) -> None:
     if not _authorized(message):
         return
     await state.clear()
-    await message.answer("Pick an operation:", reply_markup=menu_keyboard())
+    await message.answer("Pick an operation 👇", reply_markup=menu_keyboard())
 
 
 @dp.message(Command("help"))
@@ -216,7 +216,7 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
         return
     if await state.get_state() is not None:
         await state.clear()
-        await message.answer("Cancelled.", reply_markup=menu_keyboard(compact=True))
+        await message.answer("🛑 Cancelled.", reply_markup=menu_keyboard(compact=True))
     else:
         await message.answer("Nothing to cancel.")
 
@@ -224,14 +224,14 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 @dp.callback_query(F.data == "menu")
 async def cb_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await callback.message.edit_text("Pick an operation:", reply_markup=menu_keyboard())
+    await callback.message.edit_text("Pick an operation 👇", reply_markup=menu_keyboard())
     await callback.answer()
 
 
 @dp.callback_query(F.data == "mode_combine")
 async def cb_mode_combine(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(Modes.combine_subject)
-    await callback.message.edit_text("Send the first image.")
+    await callback.message.edit_text("🧩 Send the first image.")
     await callback.answer()
 
 
@@ -239,7 +239,7 @@ async def cb_mode_combine(callback: CallbackQuery, state: FSMContext) -> None:
 async def cb_mode_cloth(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(Modes.cloth)
     await callback.message.edit_text(
-        "Send a photo of a person, optionally with a caption color for the garment."
+        "👕 Send a photo of a person, optionally with a caption color for the garment."
     )
     await callback.answer()
 
@@ -247,19 +247,19 @@ async def cb_mode_cloth(callback: CallbackQuery, state: FSMContext) -> None:
 @dp.callback_query(F.data == "mode_restyle")
 async def cb_mode_restyle(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(Modes.prompt_image)
-    await callback.message.edit_text("Send a photo of a person you want to restyle.")
+    await callback.message.edit_text("✨ Send a photo of a person you want to restyle.")
     await callback.answer()
 
 
 @dp.callback_query(F.data == "mode_chat")
 async def cb_mode_chat(callback: CallbackQuery, state: FSMContext) -> None:
     if not config.CHAT_ENABLED:
-        await callback.answer("Chat is disabled.", show_alert=True)
+        await callback.answer("💬 Chat is disabled.", show_alert=True)
         return
     await state.set_state(Modes.chat)
     await state.update_data(chat_history=[])
     await callback.message.edit_text(
-        "Chat mode - send me a message. /cancel to stop.\n"
+        "💬 Chat mode - send me a message. /cancel to stop.\n"
         "(Small local model, so replies are short and may take a moment.)"
     )
     await callback.answer()
@@ -281,7 +281,7 @@ async def on_chat_text(message: Message, state: FSMContext) -> None:
     except Exception as exc:
         log.exception("chat failed")
         try:
-            await message.answer(f"Chat failed: {exc}")
+            await message.answer(f"⚠️ Chat failed: {exc}")
         except Exception:
             pass
         return
@@ -300,14 +300,14 @@ async def on_chat_text(message: Message, state: FSMContext) -> None:
     )
     if stored:
         log.info("chat not stored remotely: %s", stored.strip())
-    await message.answer(f"{answer}\n\n[{elapsed_ms} ms]")
+    await message.answer(f"🤖 {answer}\n\n[{elapsed_ms} ms]")
 
 
 @dp.message(Modes.chat)
 async def on_chat_needs_text(message: Message) -> None:
     if not _authorized(message):
         return
-    await message.answer("Send a text message (or /cancel to leave chat).")
+    await message.answer("💬 Send a text message (or /cancel to leave chat).")
 
 
 @dp.message(Modes.combine_subject, F.photo)
@@ -317,7 +317,7 @@ async def on_combine_subject(message: Message, state: FSMContext) -> None:
     source = await _download_photo(message)
     await state.update_data(subject=source)
     await state.set_state(Modes.combine_background)
-    await message.answer("Got it. Now send a second image.")
+    await message.answer("🧩 Got it! Now send the second image (the background).")
 
 
 @dp.message(Modes.combine_background, F.photo)
@@ -328,9 +328,9 @@ async def on_combine_background(message: Message, state: FSMContext) -> None:
     subject = data.get("subject")
     if not subject:
         await state.clear()
-        await message.answer("Something went wrong - try again from /menu.")
+        await message.answer("⚠️ Something went wrong - try again from /menu.")
         return
-    status = await message.answer("Combining images...")
+    status = await message.answer("🧩 Combining images...")
     await _chat_action(message, "upload_photo")
     started = time.perf_counter()
     try:
@@ -359,7 +359,7 @@ async def on_combine_background(message: Message, state: FSMContext) -> None:
     except Exception as exc:
         log.exception("combine failed")
         try:
-            await status.edit_text(f"Failed: {exc}")
+            await status.edit_text(f"❌ Failed: {exc}")
         except Exception:
             pass
     finally:
@@ -370,7 +370,7 @@ async def on_combine_background(message: Message, state: FSMContext) -> None:
 async def on_cloth(message: Message, state: FSMContext) -> None:
     if not _authorized(message) or not message.from_user:
         return
-    status = await message.answer("Changing garment color...")
+    status = await message.answer("👕 Changing garment color...")
     await _chat_action(message, "upload_photo")
     started = time.perf_counter()
     try:
@@ -409,7 +409,7 @@ async def on_cloth(message: Message, state: FSMContext) -> None:
     except Exception as exc:
         log.exception("cloth failed")
         try:
-            await status.edit_text(f"Failed: {exc}")
+            await status.edit_text(f"❌ Failed: {exc}")
         except Exception:
             pass
     finally:
@@ -424,7 +424,7 @@ async def on_prompt_image(message: Message, state: FSMContext) -> None:
     await state.update_data(prompt_source=source, prompt_file_id=message.photo[-1].file_id)
     await state.set_state(Modes.prompt_text)
     await message.answer(
-        'Write a prompt for the new look, e.g. "navy suit", "teal hoodie", "#c73a72 dress".'
+        '✨ Write a prompt for the new look, e.g. "navy suit", "teal hoodie", "#c73a72 dress".'
     )
 
 
@@ -432,7 +432,7 @@ async def on_prompt_image(message: Message, state: FSMContext) -> None:
 async def on_prompt_text_photo(message: Message) -> None:
     if not _authorized(message):
         return
-    await message.answer("Please send a text prompt, not a photo (e.g. \"navy suit\").")
+    await message.answer("✏️ Please send a text prompt, not a photo (e.g. \"navy suit\").")
 
 
 @dp.message(Modes.prompt_text, F.text)
@@ -443,10 +443,10 @@ async def on_prompt_text(message: Message, state: FSMContext) -> None:
     source = data.get("prompt_source")
     if not source:
         await state.clear()
-        await message.answer("Missing photo - start again from /menu.")
+        await message.answer("📷 Missing photo - start again from /menu.")
         return
     prompt = message.text.strip() or "default"
-    status = await message.answer("Restyling...")
+    status = await message.answer("✨ Restyling...")
     sticker_msg = await _send_processing_sticker(message)
     await _chat_action(message, "upload_photo")
     started = time.perf_counter()
@@ -493,7 +493,7 @@ async def on_prompt_text(message: Message, state: FSMContext) -> None:
     except Exception as exc:
         log.exception("restyle failed")
         try:
-            await status.edit_text(f"Failed: {exc}")
+            await status.edit_text(f"❌ Failed: {exc}")
         except Exception:
             pass
         if sticker_msg:
@@ -512,14 +512,14 @@ async def on_prompt_text(message: Message, state: FSMContext) -> None:
 async def on_mode_needs_photo(message: Message) -> None:
     if not _authorized(message):
         return
-    await message.answer("Please send a photo.")
+    await message.answer("📷 Please send a photo.")
 
 
 @dp.message(F.photo)
 async def on_photo(message: Message) -> None:
     if not _authorized(message) or not message.from_user or not message.photo:
         return
-    status = await message.answer("Processing photo...")
+    status = await message.answer("⚙️ Processing photo...")
     await _chat_action(message, "upload_photo")
     started = time.perf_counter()
     try:
@@ -554,7 +554,7 @@ async def on_photo(message: Message) -> None:
     except Exception as exc:
         log.exception("photo processing failed")
         try:
-            await status.edit_text(f"Failed: {exc}")
+            await status.edit_text(f"❌ Failed: {exc}")
         except Exception:
             pass
 
@@ -565,7 +565,7 @@ async def on_other(message: Message) -> None:
         return
     if message.photo:
         return
-    await message.answer("Send me a photo - or pick an operation from /menu (including Chat).")
+    await message.answer("📷 Send me a photo - or pick an operation from /menu (including Chat).")
 
 
 async def main() -> None:

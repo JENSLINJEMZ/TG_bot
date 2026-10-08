@@ -73,4 +73,15 @@ def test_menu_commands_are_well_formed():
         assert re.fullmatch(r"[a-z0-9_]{1,32}", command), command
         assert 1 <= len(description) <= 256, command
         assert not description.startswith("/")
-        assert description[0].isupper(), f"{command}: description should start capitalised"
+        assert not description[0].isascii(), f"{command}: menu description should lead with an emoji"
+        first_letter = next(ch for ch in description if ch.isalpha())
+        assert first_letter.isupper(), f"{command}: description should start capitalised"
+
+
+def test_menu_button_labels_lead_with_an_emoji():
+    source = BOT_PY.read_text()
+    keyboard = source.split("def menu_keyboard", 1)[1].split("\ndef ", 1)[0]
+    labels = re.findall(r'text="([^"]+)"', keyboard)
+    assert labels[:4], "menu keyboard lost its buttons"
+    for label in labels[:4]:
+        assert not label[0].isascii(), f"{label!r} should start with an emoji"
