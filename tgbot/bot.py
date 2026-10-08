@@ -77,9 +77,6 @@ HELP_TEXT = (
     "\"#ff8800\", \"gradient red blue\", \"transparent\") still works directly.\n\n"
     "Commands:\n"
     "/menu - choose an operation\n"
-    "/stats - how many photos are stored\n"
-    "/last - resend your last processed photo\n"
-    "/sync - upload locally queued data to Supabase\n"
     "/cancel - stop the current operation\n"
     "/help - this message"
 )
@@ -90,9 +87,6 @@ BOT_COMMANDS = [
     BotCommand(command="menu", description="Pick an operation (combine, cloth, restyle, chat)"),
     BotCommand(command="help", description="What this bot can do"),
     BotCommand(command="cancel", description="Stop the current operation"),
-    BotCommand(command="stats", description="How many photos are stored"),
-    BotCommand(command="last", description="Resend your last processed photo"),
-    BotCommand(command="sync", description="Upload locally queued data to Supabase"),
 ]
 
 
@@ -225,87 +219,6 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
         await message.answer("Cancelled.", reply_markup=menu_keyboard(compact=True))
     else:
         await message.answer("Nothing to cancel.")
-
-
-@dp.message(Command("stats"))
-async def cmd_stats(message: Message) -> None:
-    if not _authorized(message):
-        return
-    if db is None:
-        await message.answer("Storage is not configured (no SUPABASE_URL in .env).")
-        return
-    try:
-        total = await db.count()
-    except SupabasePermissionError as exc:
-        await message.answer(str(exc))
-        return
-    except Exception as exc:
-        await message.answer(f"Could not reach Supabase: {exc}")
-        return
-    await message.answer(f"{total} photos processed so far.")
-
-
-@dp.message(Command("last"))
-async def cmd_last(message: Message) -> None:
-    if not _authorized(message) or not message.from_user:
-        return
-    if db is None:
-        await message.answer("Storage is not configured (no SUPABASE_URL in .env).")
-        return
-    try:
-        row = await db.latest(message.from_user.id)
-    except SupabasePermissionError as exc:
-        await message.answer(str(exc))
-        return
-    except Exception as exc:
-        await message.answer(f"Could not reach Supabase: {exc}")
-        return
-    if not row or not row.get("result_path"):
-        await message.answer("Nothing stored yet.")
-        return
-    try:
-        payload = await db.download(row["result_path"])
-    except Exception as exc:
-        await message.answer(f"Could not fetch from storage: {exc}")
-        return
-    is_png = payload.startswith(b"\x89PNG")
-    mode = row.get("mode") or "bg"
-    caption = f"mode: {mode} | background: {row.get('prompt') or 'default'}"
-    if is_png:
-        await message.answer_document(BufferedInputFile(payload, filename="result.png"), caption=caption)
-    else:
-        await message.answer_photo(BufferedInputFile(payload, filename="result.jpg"), caption=caption)
-
-
-@dp.message(Command("sync"))
-async def cmd_sync(message: Message) -> None:
-    if not _authorized(message):
-        return
-    if local_store is None:
-        await message.answer("Offline storage is turned off (OFFLINE_STORE_ENABLED=0).")
-        return
-    queued = sum(local_store.counts())
-    if queued == 0:
-        await message.answer("Nothing pending - the local outbox is empty.")
-        return
-    if db is None:
-        await message.answer(
-            f"{queued} item(s) are saved locally, but Supabase is not configured "
-            "(set SUPABASE_URL and SUPABASE_API_KEY in .env)."
-        )
-        return
-    await message.answer(f"Uploading {queued} queued item(s)...")
-    try:
-        summary = await sync_pending(db, local_store)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("sync failed: %s", exc)
-        await message.answer(f"Sync failed: {exc}")
-        return
-    remaining = summary.get("remaining", sum(local_store.counts()))
-    await message.answer(
-        f"Synced {summary['media']} photo(s) and {summary['chats']} chat turn(s).\n"
-        f"Failed: {summary['failed']} | still queued: {remaining}"
-    )
 
 
 @dp.callback_query(F.data == "menu")

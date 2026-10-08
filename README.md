@@ -78,7 +78,7 @@ uv run python -m tgbot.sync --dry-run   # list what is waiting
 uv run python -m tgbot.sync             # upload and clear the queue
 ```
 
-or send `/sync` in the bot. The bot also attempts the flush once at startup, so
+The bot also attempts the flush once at startup, so
 a restart after an outage drains the queue automatically. Rows keep their
 original timestamps, so a late sync still lands in chronological order.
 
@@ -100,9 +100,6 @@ via `set_my_commands`), so the commands below are one tap away.
 | photo + caption `gradient red blue` | vertical gradient between two colors |
 | photo + caption `transparent` | cutout, PNG with alpha |
 | photo, no caption | `DEFAULT_BACKGROUND` from `.env` |
-| `/last` | resend your latest stored result |
-| `/stats` | number of stored photos |
-| `/sync` | upload locally queued photos/chats to Supabase |
 | `/cancel` | stop the current operation |
 | `/help` | help |
 
