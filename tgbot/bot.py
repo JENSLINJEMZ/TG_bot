@@ -11,7 +11,14 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    BotCommand,
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from . import config
 from . import chat as chat_engine
@@ -76,6 +83,17 @@ HELP_TEXT = (
     "/cancel - stop the current operation\n"
     "/help - this message"
 )
+
+
+BOT_COMMANDS = [
+    BotCommand(command="start", description="Welcome and the operation menu"),
+    BotCommand(command="menu", description="Pick an operation (combine, cloth, restyle, chat)"),
+    BotCommand(command="help", description="What this bot can do"),
+    BotCommand(command="cancel", description="Stop the current operation"),
+    BotCommand(command="stats", description="How many photos are stored"),
+    BotCommand(command="last", description="Resend your last processed photo"),
+    BotCommand(command="sync", description="Upload locally queued data to Supabase"),
+]
 
 
 def menu_keyboard(compact: bool = False) -> InlineKeyboardMarkup:
@@ -652,6 +670,11 @@ async def main() -> None:
             log.warning("Supabase unreachable: %s", exc)
     else:
         log.info("Supabase not configured - bot runs without storage")
+    try:
+        await bot.set_my_commands(BOT_COMMANDS)
+        log.info("registered %d bot commands for the chat input menu", len(BOT_COMMANDS))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not register bot commands: %s", exc)
     if local_store is not None and db is not None:
         pending = sum(local_store.counts())
         if pending:

@@ -89,8 +89,12 @@ original timestamps, so a late sync still lands in chronological order.
 
 ## Usage
 
+Typing `/` in the chat opens Telegram's built-in command menu (registered at startup
+via `set_my_commands`), so the commands below are one tap away.
+
 | Message | Effect |
 |---|---|
+| `/start` | welcome + the operation menu |
 | `/menu` | pick an operation (combine, cloth, restyle, chat) |
 | photo + caption `navy` / `#ff8800` | solid background (direct) |
 | photo + caption `gradient red blue` | vertical gradient between two colors |
