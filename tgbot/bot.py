@@ -34,6 +34,7 @@ from .bgchange import (
     restyle_outfit,
 )
 from .diffuse import generate as diffuse_generate
+from .jobs import Job, JobQueue, QUEUE_FULL_TEXT
 from .localstore import LocalStore
 from .ratelimit import RateLimiter
 from .sticker import processing_sticker
@@ -58,6 +59,7 @@ if config.SUPABASE_ENABLED:
 local_store = LocalStore(config.OFFLINE_STORE_PATH) if config.OFFLINE_STORE_ENABLED else None
 storage = Storage(db, local_store)
 rate = RateLimiter(config.COOLDOWN_SECONDS)
+jobs = JobQueue(workers=max(1, config.MAX_CONCURRENT))
 
 
 class Modes(StatesGroup):
@@ -72,11 +74,13 @@ class Modes(StatesGroup):
 HELP_TEXT = (
     "What can I do:\n"
     "🧩 combine a cutout onto another photo\n"
-    "👕 change a person's cloth color\n"
+    "👕 recolor a garment - or give any outfit prompt in the caption\n"
     "✨ restyle an outfit from a text prompt\n"
     "💬 chat with a small local model\n\n"
     "Use /menu to pick an operation. A photo with a color caption (\"navy\", "
-    "\"#ff8800\", \"gradient red blue\", \"transparent\") still works directly.\n\n"
+    "\"#ff8800\", \"gradient red blue\", \"transparent\") still works directly.\n"
+    "Heavy jobs run in a queue: you get a \"queued\" notice, then the result "
+    "arrives here when it's ready.\n\n"
     "Commands:\n"
     "🎨 /menu - choose an operation\n"
     "🛑 /cancel - stop the current operation\n"
@@ -147,7 +151,61 @@ def _extension(data: bytes) -> tuple[str, str]:
     return "jpg", "image/jpeg"
 
 
-process_limit = asyncio.Semaphore(config.MAX_CONCURRENT)
+async def _submit_job(
+    message: Message,
+    *,
+    kind: str,
+    run,
+    state: FSMContext | None = None,
+    clear_state: bool = True,
+    pre_notice: bool = True,
+) -> bool:
+    """Admit a heavy job to the queue and reply with its position.
+
+    pre_notice=True (image jobs): the "Queued..." message is created *before*
+    submit, so the worker can always edit/delete it. pre_notice=False (chat):
+    a notice is created only when another job is actually ahead, which keeps
+    the normal one-message-per-turn chat flow. Returns False when full.
+    """
+    if not message.from_user:
+        return False
+    job = Job(kind=kind, user_id=message.from_user.id, chat_id=message.chat.id, run=run)
+    notice: Message | None = None
+    if pre_notice:
+        try:
+            notice = await message.answer("⏳ Queued - one moment...")
+        except Exception:
+            notice = None
+        job.status_msg = notice
+    position = jobs.submit(job)
+    if position is None:
+        if notice is not None:
+            try:
+                await notice.edit_text(QUEUE_FULL_TEXT)
+            except Exception:
+                pass
+        else:
+            try:
+                await message.answer(QUEUE_FULL_TEXT)
+            except Exception:
+                pass
+        return False
+    if notice is None and position > 1:
+        # something is ahead: tell the user (worker cannot have taken the job yet)
+        try:
+            job.status_msg = await message.answer(
+                f"⏳ Queued - position {position}. You'll get the reply right here."
+            )
+        except Exception:
+            job.status_msg = None
+    elif notice is not None and position > 1:
+        try:
+            await notice.edit_text(f"⏳ Queued - position {position}. The result arrives here.")
+        except Exception:
+            pass
+    if state is not None and clear_state:
+        await state.clear()
+    return True
 
 
 async def _chat_action(message: Message, action: str) -> None:
@@ -177,6 +235,7 @@ async def _send_processing_sticker(message: Message) -> Message | None:
 
 
 async def _send_result(message: Message, payload: bytes, content_type: str, caption: str) -> None:
+    caption = f"✅ done | {caption}"
     if content_type == "image/jpeg":
         await message.answer_photo(
             BufferedInputFile(payload, filename="result.jpg"),
@@ -266,7 +325,10 @@ async def cmd_stats(message: Message) -> None:
     except Exception as exc:
         await message.answer(f"Could not reach Supabase: {exc}")
         return
-    await message.answer(f"📊 {total} photos processed so far.")
+    await message.answer(
+        f"📊 {total} photos processed so far.\n"
+        f"⚙️ jobs: {jobs.done} done, {jobs.failed} failed, {jobs.pending()} in queue"
+    )
 
 
 @dp.message(Command("last"))
@@ -350,7 +412,9 @@ async def cb_mode_combine(callback: CallbackQuery, state: FSMContext) -> None:
 async def cb_mode_cloth(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(Modes.cloth)
     await callback.message.edit_text(
-        "👕 Send a photo of a person, optionally with a caption color for the garment."
+        "👕 Send a photo of a person. Caption optional: a color "
+        '(navy, #ff0000, gradient red blue) OR any garment prompt '
+        '("bikini", "leather jacket", "gold chain") - no filter, your prompt drives it.'
     )
     await callback.answer()
 
@@ -389,33 +453,41 @@ async def on_chat_text(message: Message, state: FSMContext) -> None:
         return
     data = await state.get_data()
     history = data.get("chat_history") or []
-    await _chat_action(message, "typing")
-    started = time.perf_counter()
-    try:
-        answer, _secs = await asyncio.to_thread(chat_engine.reply, text, history)
-    except Exception as exc:
-        log.exception("chat failed")
+
+    async def run() -> None:
+        await _chat_action(message, "typing")
+        started = time.perf_counter()
         try:
-            await message.answer(f"⚠️ Chat failed: {exc}")
+            answer, _secs = await asyncio.to_thread(chat_engine.reply, text, history)
         except Exception:
-            pass
-        return
-    history = (
-        list(history) + [{"role": "user", "content": text}, {"role": "assistant", "content": answer}]
-    )[-2 * config.CHAT_HISTORY_TURNS :] if config.CHAT_HISTORY_TURNS > 0 else []
-    await state.update_data(chat_history=history)
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
-    stored = await storage.save_chat(
-        chat_id=message.chat.id,
-        user_id=message.from_user.id,
-        message_id=message.message_id,
-        prompt=text,
-        reply=answer,
-        elapsed_ms=elapsed_ms,
+            log.exception("chat failed")
+            try:
+                await message.answer("⚠️ Chat failed - please try again.")
+            except Exception:
+                pass
+            return
+        history = (
+            list(history) + [{"role": "user", "content": text}, {"role": "assistant", "content": answer}]
+        )[-2 * config.CHAT_HISTORY_TURNS :] if config.CHAT_HISTORY_TURNS > 0 else []
+        await state.update_data(chat_history=history)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        stored = await storage.save_chat(
+            chat_id=message.chat.id,
+            user_id=message.from_user.id,
+            message_id=message.message_id,
+            prompt=text,
+            reply=answer,
+            elapsed_ms=elapsed_ms,
+        )
+        if stored:
+            log.info("chat not stored remotely: %s", stored.strip())
+        await message.answer(f"🤖 {answer}\n\n[{elapsed_ms} ms]")
+
+    # quiet path: with an empty queue the worker takes this immediately, so the
+    # user still gets exactly one reply message (no extra "queued" noise)
+    await _submit_job(
+        message, kind="chat", run=run, state=state, clear_state=False, pre_notice=False
     )
-    if stored:
-        log.info("chat not stored remotely: %s", stored.strip())
-    await message.answer(f"🤖 {answer}\n\n[{elapsed_ms} ms]")
 
 
 @dp.message(Modes.chat)
@@ -449,17 +521,23 @@ async def on_combine_background(message: Message, state: FSMContext) -> None:
         await state.clear()
         await message.answer("⚠️ Something went wrong - try again from /menu.")
         return
-    status = await message.answer("🧩 Combining images...")
-    await _chat_action(message, "upload_photo")
-    started = time.perf_counter()
     try:
         background = await _download_photo(message)
+    except Exception:
+        log.exception("combine: background download failed")
+        await message.answer("❌ Could not download that photo - try again from /menu.")
+        await state.clear()
+        return
+    subject_ext, subject_type = _extension(subject)
+    bg_ext, bg_type = _extension(background)
+
+    async def run() -> None:
+        await _chat_action(message, "upload_photo")
+        started = time.perf_counter()
         result, content_type = await asyncio.to_thread(
             combine_images, subject, background, config.MAX_IMAGE_DIM
         )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        subject_ext, subject_type = _extension(subject)
-        bg_ext, bg_type = _extension(background)
         stored = await _store_uploads(
             message,
             mode="combine",
@@ -474,15 +552,8 @@ async def on_combine_background(message: Message, state: FSMContext) -> None:
             elapsed_ms=elapsed_ms,
         )
         await _send_result(message, result, content_type, f"combined | {elapsed_ms} ms{stored}")
-        await status.delete()
-    except Exception as exc:
-        log.exception("combine failed")
-        try:
-            await status.edit_text(f"❌ Failed: {exc}")
-        except Exception:
-            pass
-    finally:
-        await state.clear()
+
+    await _submit_job(message, kind="combine", run=run, state=state)
 
 
 @dp.message(Modes.cloth, F.photo)
@@ -493,50 +564,82 @@ async def on_cloth(message: Message, state: FSMContext) -> None:
     if wait > 0:
         await message.answer(f"⏳ Please wait {wait:.0f}s before the next request.")
         return
-    status = await message.answer("👕 Changing garment color...")
-    await _chat_action(message, "upload_photo")
-    started = time.perf_counter()
     try:
         source = await _download_photo(message)
-        background, note = parse_background(message.caption, config.DEFAULT_BACKGROUND)
-        if isinstance(background, Gradient):
-            color = background.top
-            note = "gradients not supported for clothes - used top color"
-        elif isinstance(background, Transparent):
-            color = (200, 200, 200)
-            note = "clothes need a solid color - used gray"
-        else:
-            color = background.rgb
-        result, content_type = await asyncio.to_thread(
-            change_cloth_color, source, color, config.MAX_IMAGE_DIM
-        )
+    except Exception:
+        log.exception("cloth: download failed")
+        await message.answer("❌ Could not download that photo - try again from /menu.")
+        await state.clear()
+        return
+    caption = message.caption
+    background, note = parse_background(caption, config.DEFAULT_BACKGROUND)
+    # A caption that is not a color ("bikini", "leather jacket", "gold chain"...)
+    # is a free garment prompt: there is no content filter in this bot, so it goes
+    # straight to the diffusion engine instead of failing as an unknown color.
+    prompt_mode = bool(caption and caption.strip() and note is not None)
+    if isinstance(background, Gradient):
+        color = background.top
+        note = "gradients not supported for clothes - used top color"
+        prompt_mode = False
+    elif isinstance(background, Transparent):
+        color = (200, 200, 200)
+        note = "clothes need a solid color - used gray"
+        prompt_mode = False
+    else:
+        color = background.rgb
+    if prompt_mode:
+        note = None
+    source_ext, source_type = _extension(source)
+
+    async def run() -> None:
+        await _chat_action(message, "upload_photo")
+        started = time.perf_counter()
+        payload: bytes | None = None
+        content_type = "image/png"
+        engine = ""
+        rgb: list[int] | None = list(color)
+        if prompt_mode and config.DIFFUSE_ENABLED:
+            try:
+                payload, content_type, gen_secs = await asyncio.to_thread(
+                    diffuse_generate, caption, source
+                )
+                engine = f"diffusion {gen_secs:.0f}s"
+                rgb = None
+            except Exception as exc:
+                log.warning("cloth prompt diffusion failed, tint fallback: %s", exc)
+                engine = "diffusion unavailable - tint fallback"
+        if payload is None:
+            payload, content_type = await asyncio.to_thread(
+                change_cloth_color, source, color, config.MAX_IMAGE_DIM
+            )
+            if prompt_mode and not engine:
+                engine = "tint (diffusion disabled)"
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        source_ext, source_type = _extension(source)
         stored = await _store_uploads(
             message,
             mode="cloth",
-            prompt=message.caption,
-            background_rgb=list(color),
+            prompt=caption,
+            background_rgb=rgb,
             originals=[(source, source_type, source_ext)],
-            result=(result, content_type),
+            result=(payload, content_type),
             source_file_id=message.photo[-1].file_id,
             elapsed_ms=elapsed_ms,
         )
-        parts = [f"garment color: #{color[0]:02x}{color[1]:02x}{color[2]:02x}", f"{elapsed_ms} ms"]
+        parts: list[str] = []
+        if prompt_mode:
+            parts.append(f"outfit: {(caption or '').strip()}")
+        else:
+            parts.append(f"garment color: #{color[0]:02x}{color[1]:02x}{color[2]:02x}")
+        if engine:
+            parts.append(engine)
         if note:
-            parts.insert(1, note)
+            parts.append(note)
+        parts.append(f"{elapsed_ms} ms")
         if stored:
             parts.append(stored)
-        await _send_result(message, result, content_type, " | ".join(parts))
-        await status.delete()
-    except Exception as exc:
-        log.exception("cloth failed")
-        try:
-            await status.edit_text(f"❌ Failed: {exc}")
-        except Exception:
-            pass
-    finally:
-        await state.clear()
+        await _send_result(message, payload, content_type, " | ".join(parts))
+
+    await _submit_job(message, kind="clothing", run=run, state=state)
 
 
 @dp.message(Modes.prompt_image, F.photo)
@@ -573,63 +676,54 @@ async def on_prompt_text(message: Message, state: FSMContext) -> None:
         await message.answer("📷 Missing photo - start again from /menu.")
         return
     prompt = message.text.strip() or "default"
-    status = await message.answer("✨ Restyling...")
-    sticker_msg = await _send_processing_sticker(message)
-    await _chat_action(message, "upload_photo")
-    started = time.perf_counter()
-    try:
-        source_ext, source_type = _extension(source)
-        result: tuple[bytes, str] | None = None
-        engine_str = "tint"
-        if config.DIFFUSE_ENABLED:
-            try:
-                payload, content_type, gen_secs = await asyncio.to_thread(
-                    diffuse_generate, message.text, source,
-                )
-                result = (payload, content_type)
-                engine_str = f"diffusion {gen_secs:.0f}s"
-            except Exception as exc:
-                log.warning("diffusion failed, tint fallback: %s", exc)
-                engine_str = "diffusion unavailable - tint fallback"
-        if result is None:
-            (result_payload, result_type), _, _ = await asyncio.to_thread(
-                restyle_outfit, source, message.text, config.DEFAULT_BACKGROUND, config.MAX_IMAGE_DIM
-            )
-            result = (result_payload, result_type)
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        stored = await _store_uploads(
-            message,
-            mode="restyle",
-            prompt=prompt,
-            background_rgb=None,
-            originals=[(source, source_type, source_ext)],
-            result=result,
-            source_file_id=data.get("prompt_file_id"),
-            elapsed_ms=elapsed_ms,
-        )
-        parts = [f"restyled: {prompt}", engine_str, f"{elapsed_ms} ms"]
-        if stored:
-            parts.append(stored)
-        await _send_result(message, result[0], result[1], " | ".join(parts))
-        await status.delete()
-        if sticker_msg:
-            try:
-                await sticker_msg.delete()
-            except Exception:
-                pass
-    except Exception as exc:
-        log.exception("restyle failed")
+    source_ext, source_type = _extension(source)
+    file_id = data.get("prompt_file_id")
+
+    async def run() -> None:
+        sticker_msg = await _send_processing_sticker(message)
+        await _chat_action(message, "upload_photo")
+        started = time.perf_counter()
         try:
-            await status.edit_text(f"❌ Failed: {exc}")
-        except Exception:
-            pass
-        if sticker_msg:
-            try:
-                await sticker_msg.delete()
-            except Exception:
-                pass
-    finally:
-        await state.clear()
+            result: tuple[bytes, str] | None = None
+            engine_str = "tint"
+            if config.DIFFUSE_ENABLED:
+                try:
+                    payload, content_type, gen_secs = await asyncio.to_thread(
+                        diffuse_generate, message.text, source,
+                    )
+                    result = (payload, content_type)
+                    engine_str = f"diffusion {gen_secs:.0f}s"
+                except Exception as exc:
+                    log.warning("diffusion failed, tint fallback: %s", exc)
+                    engine_str = "diffusion unavailable - tint fallback"
+            if result is None:
+                (result_payload, result_type), _, _ = await asyncio.to_thread(
+                    restyle_outfit, source, message.text, config.DEFAULT_BACKGROUND, config.MAX_IMAGE_DIM
+                )
+                result = (result_payload, result_type)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            stored = await _store_uploads(
+                message,
+                mode="restyle",
+                prompt=prompt,
+                background_rgb=None,
+                originals=[(source, source_type, source_ext)],
+                result=result,
+                source_file_id=file_id,
+                elapsed_ms=elapsed_ms,
+            )
+            parts = [f"restyled: {prompt}", engine_str, f"{elapsed_ms} ms"]
+            if stored:
+                parts.append(stored)
+            await _send_result(message, result[0], result[1], " | ".join(parts))
+        finally:
+            if sticker_msg:
+                try:
+                    await sticker_msg.delete()
+                except Exception:
+                    pass
+
+    await _submit_job(message, kind="restyle", run=run, state=state)
 
 
 @dp.message(Modes.combine_subject)
@@ -643,51 +737,49 @@ async def on_mode_needs_photo(message: Message) -> None:
 
 
 @dp.message(F.photo)
-async def on_photo(message: Message) -> None:
+async def on_photo(message: Message, state: FSMContext) -> None:
     if not _authorized(message) or not message.from_user or not message.photo:
         return
     wait = _cooldown_seconds(message)
     if wait > 0:
         await message.answer(f"⏳ Please wait {wait:.0f}s before the next request.")
         return
-    status = await message.answer("⚙️ Processing photo...")
-    await _chat_action(message, "upload_photo")
-    started = time.perf_counter()
     try:
         source = await _download_photo(message)
+    except Exception:
+        log.exception("photo download failed")
+        await message.answer("❌ Could not download that photo - try again.")
+        return
+    caption = message.caption
+    background, note = parse_background(caption, config.DEFAULT_BACKGROUND)
+    background_rgb = list(background.rgb) if isinstance(background, Solid) else None
+    source_ext, source_type = _extension(source)
 
-        background, note = parse_background(message.caption, config.DEFAULT_BACKGROUND)
-        async with process_limit:
-            result, content_type = await asyncio.to_thread(
-                change_background, source, background, config.MAX_IMAGE_DIM
-            )
+    async def run() -> None:
+        await _chat_action(message, "upload_photo")
+        started = time.perf_counter()
+        result, content_type = await asyncio.to_thread(
+            change_background, source, background, config.MAX_IMAGE_DIM
+        )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-
-        source_ext, source_type = _extension(source)
         stored = await _store_uploads(
             message,
             mode="bg",
-            prompt=message.caption,
-            background_rgb=list(background.rgb) if isinstance(background, Solid) else None,
+            prompt=caption,
+            background_rgb=background_rgb,
             originals=[(source, source_type, source_ext)],
             result=(result, content_type),
             source_file_id=message.photo[-1].file_id,
             elapsed_ms=elapsed_ms,
         )
-
         parts = [f"background: {describe(background)}", f"{elapsed_ms} ms"]
         if note:
             parts.insert(1, note)
         if stored:
             parts.append(stored)
         await _send_result(message, result, content_type, " | ".join(parts))
-        await status.delete()
-    except Exception as exc:
-        log.exception("photo processing failed")
-        try:
-            await status.edit_text(f"❌ Failed: {exc}")
-        except Exception:
-            pass
+
+    await _submit_job(message, kind="background", run=run, state=state)
 
 
 @dp.message()
@@ -732,10 +824,12 @@ async def main() -> None:
                 log.info("startup outbox sync: %s", summary)
             except Exception as exc:  # noqa: BLE001
                 log.warning("could not sync local outbox at startup: %s", exc)
+    await jobs.start()
     log.info("starting long polling")
     try:
         await dp.start_polling(bot)
     finally:
+        await jobs.stop()
         if db is not None:
             await db.close()
         await bot.session.close()
