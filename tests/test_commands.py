@@ -7,9 +7,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 BOT_PY = Path(__file__).resolve().parent.parent / "tgbot" / "bot.py"
 
-# removed from the bot: no menu entry, no handler, nothing to type
-REMOVED_COMMANDS = {"stats", "last", "sync"}
-
 
 def _module_value(name: str) -> ast.AST:
     tree = ast.parse(BOT_PY.read_text())
@@ -33,6 +30,11 @@ def _listed_commands() -> list[tuple[str, str]]:
     return values
 
 
+def _admin_commands() -> set[str]:
+    node = _module_value("ADMIN_COMMANDS")
+    return {item.value for item in node.elts}  # type: ignore[union-attr]
+
+
 def _registered_commands() -> set[str]:
     tree = ast.parse(BOT_PY.read_text())
     found: set[str] = set()
@@ -50,20 +52,30 @@ def _registered_commands() -> set[str]:
     return found
 
 
-def test_menu_lists_exactly_the_registered_handlers():
+def test_menu_lists_exactly_the_registered_non_admin_handlers():
     listed = {command for command, _ in _listed_commands()}
-    assert listed == _registered_commands(), "menu and handlers disagree"
+    assert listed == _registered_commands() - _admin_commands()
+    assert listed <= _registered_commands()
 
 
-def test_removed_commands_have_no_handler_and_no_menu_entry():
-    registered = _registered_commands()
-    listed = {command for command, _ in _listed_commands()}
+def test_admin_commands_are_registered_but_hidden():
     source = BOT_PY.read_text()
-    for command in sorted(REMOVED_COMMANDS):
-        assert command not in registered, f"/{command} still has a handler"
-        assert command not in listed, f"/{command} still listed in the menu"
-        assert f'Command("{command}")' not in source
-        assert f"/{command} " not in source, f"/{command} still mentioned in help text"
+    assert "return bool(user and config.OWNER_USER_ID" in source, "owner gate missing"
+    listed = {command for command, _ in _listed_commands()}
+    for command in sorted(_admin_commands()):
+        assert command in _registered_commands(), f"/{command} lost its handler"
+        assert command not in listed, f"/{command} leaked into the menu"
+        assert f'Command("{command}")' in source
+        assert f"/{command} " not in source, f"/{command} mentioned in help/labels"
+        handler = source.split(f'Command("{command}")', 1)[1].split("\n@dp", 1)[0]
+        assert "_require_owner" in handler, f"/{command} handler is not owner-gated"
+
+
+def test_owner_gate_and_cooldown_are_defined_and_used():
+    source = BOT_PY.read_text()
+    assert "async def _require_owner" in source
+    assert "def _cooldown_seconds" in source
+    assert source.count("_cooldown_seconds(") >= 6, "cooldown should gate each heavy handler"
 
 
 def test_menu_commands_are_well_formed():

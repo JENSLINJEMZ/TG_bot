@@ -24,10 +24,15 @@ ALLOWED_USERS = {
     for item in os.getenv("ALLOWED_USERS", "").replace(";", ",").split(",")
     if item.strip().isdigit()
 }
+# one account allowed to run the hidden admin commands (/stats, /last, /sync)
+_owner_raw = os.getenv("OWNER_USER_ID", "").strip()
+OWNER_USER_ID = int(_owner_raw) if _owner_raw.isdigit() else 0
+# minimum seconds between heavy requests (diffusion, chat) per user; 0 disables
+COOLDOWN_SECONDS = max(0, int(os.getenv("COOLDOWN_SECONDS", "30") or "30"))
 DIFFUSE_ENABLED = os.getenv("DIFFUSE_ENABLED", "1").strip() != "0"
 DIFFUSE_MODEL = os.getenv("DIFFUSE_MODEL", "segmind/tiny-sd").strip()
-DIFFUSE_RESOLUTION = max(128, int(os.getenv("DIFFUSE_RESOLUTION", "256") or "256"))
-DIFFUSE_STEPS = max(1, int(os.getenv("DIFFUSE_STEPS", "8") or "8"))
+DIFFUSE_RESOLUTION = max(128, int(os.getenv("DIFFUSE_RESOLUTION", "224") or "224"))
+DIFFUSE_STEPS = max(1, int(os.getenv("DIFFUSE_STEPS", "5") or "5"))
 DIFFUSE_STRENGTH = float(os.getenv("DIFFUSE_STRENGTH", "0.6") or "0.6")
 DIFFUSE_THREADS = max(1, int(os.getenv("DIFFUSE_THREADS", "2") or "2"))
 DIFFUSE_UNLOAD_AFTER = os.getenv("DIFFUSE_UNLOAD_AFTER", "0").strip() != "0"

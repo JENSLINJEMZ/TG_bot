@@ -103,6 +103,15 @@ via `set_my_commands`), so the commands below are one tap away.
 | `/cancel` | stop the current operation |
 | `/help` | help |
 
+Admin commands (`OWNER_USER_ID`) never show in the `/` menu or help; they are
+typed directly and silently ignored for everyone else:
+
+| Message | Effect |
+|---|---|
+| `/stats` | number of stored photos |
+| `/last` | resend your latest stored result |
+| `/sync` | upload locally queued photos/chats to Supabase |
+
 Modes from the menu:
 - **Combine images** — send image 1 (subject), then image 2 (background); the subject's cutout pastes onto it.
 - **Change cloth** — tint a person's garment to a caption color (local, best-effort region).
@@ -118,6 +127,9 @@ Modes from the menu:
 Sending a photo with a color caption ("navy", "gradient red blue", "transparent") still runs the direct background/remover flow.
 
 Restrict access by listing your user ids in `ALLOWED_USERS` (comma separated).
+`OWNER_USER_ID` unlocks the three admin commands above; `COOLDOWN_SECONDS` is the
+per-user pause between heavy requests (diffusion and chat, owner exempt) so one
+person can't hog the CPU.
 
 Large photos are downscaled to `MAX_IMAGE_DIM` before inference, so it stays fast
 on any phone screenshot. Processing is serialized with `MAX_CONCURRENT` so the
@@ -136,8 +148,8 @@ RSS stays near 2 GB. Tune with `.env`:
 |---|---|---|
 | `DIFFUSE_ENABLED` | `1` | `0` disables diffusion (tint only) |
 | `DIFFUSE_MODEL` | `segmind/tiny-sd` | local model id |
-| `DIFFUSE_RESOLUTION` | `256` | working resolution (upscaled back after) |
-| `DIFFUSE_STEPS` | `8` | scheduler steps; `DIFFUSE_STRENGTH` slices how many run |
+| `DIFFUSE_RESOLUTION` | `224` | working resolution (upscaled back after) |
+| `DIFFUSE_STEPS` | `5` | scheduler steps; `DIFFUSE_STRENGTH` slices how many run |
 | `DIFFUSE_STRENGTH` | `0.6` | how far the redraw may drift from the photo |
 | `DIFFUSE_UNLOAD_AFTER` | `0` | `1` frees the UNet after each run (saves RAM, +~40s/request) |
 | `DIFFUSE_THREADS` | `2` | CPU threads for the model |

@@ -35,6 +35,7 @@ from .bgchange import (
 )
 from .diffuse import generate as diffuse_generate
 from .localstore import LocalStore
+from .ratelimit import RateLimiter
 from .sticker import processing_sticker
 from .storage import Storage, NOT_STORED
 from .supabase import Supabase, SupabaseConfig, SupabasePermissionError
@@ -56,6 +57,7 @@ if config.SUPABASE_ENABLED:
     )
 local_store = LocalStore(config.OFFLINE_STORE_PATH) if config.OFFLINE_STORE_ENABLED else None
 storage = Storage(db, local_store)
+rate = RateLimiter(config.COOLDOWN_SECONDS)
 
 
 class Modes(StatesGroup):
@@ -89,6 +91,10 @@ BOT_COMMANDS = [
     BotCommand(command="cancel", description="🛑 Stop the current operation"),
 ]
 
+# admin commands: registered handlers, but intentionally absent from the `/` menu,
+# the HELP text and the inline keyboard - the owner runs them by typing them.
+ADMIN_COMMANDS = ("stats", "last", "sync")
+
 
 def menu_keyboard(compact: bool = False) -> InlineKeyboardMarkup:
     buttons = [
@@ -107,6 +113,30 @@ def _authorized(message: Message) -> bool:
         return True
     user = message.from_user
     return bool(user and user.id in config.ALLOWED_USERS)
+
+
+def _is_owner(message: Message) -> bool:
+    user = message.from_user
+    return bool(user and config.OWNER_USER_ID and user.id == config.OWNER_USER_ID)
+
+
+async def _require_owner(message: Message) -> bool:
+    """Gate for the hidden admin commands. Non-owners get nothing at all."""
+    if _is_owner(message):
+        return True
+    if not config.OWNER_USER_ID:
+        await message.answer("Admin commands are disabled - set OWNER_USER_ID in .env.")
+    return False
+
+
+def _cooldown_seconds(message: Message) -> float:
+    """Seconds the user must wait before the next heavy request (0 = allowed)."""
+    user = message.from_user
+    if user is None or _is_owner(message):
+        return 0.0
+    if rate.allow(user.id):
+        return 0.0
+    return rate.wait_left(user.id)
 
 
 def _extension(data: bytes) -> tuple[str, str]:
@@ -221,6 +251,87 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
         await message.answer("Nothing to cancel.")
 
 
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message) -> None:
+    if not await _require_owner(message):
+        return
+    if db is None:
+        await message.answer("Storage is not configured (no SUPABASE_URL in .env).")
+        return
+    try:
+        total = await db.count()
+    except SupabasePermissionError as exc:
+        await message.answer(str(exc))
+        return
+    except Exception as exc:
+        await message.answer(f"Could not reach Supabase: {exc}")
+        return
+    await message.answer(f"📊 {total} photos processed so far.")
+
+
+@dp.message(Command("last"))
+async def cmd_last(message: Message) -> None:
+    if not await _require_owner(message) or not message.from_user:
+        return
+    if db is None:
+        await message.answer("Storage is not configured (no SUPABASE_URL in .env).")
+        return
+    try:
+        row = await db.latest(message.from_user.id)
+    except SupabasePermissionError as exc:
+        await message.answer(str(exc))
+        return
+    except Exception as exc:
+        await message.answer(f"Could not reach Supabase: {exc}")
+        return
+    if not row or not row.get("result_path"):
+        await message.answer("Nothing stored yet.")
+        return
+    try:
+        payload = await db.download(row["result_path"])
+    except Exception as exc:
+        await message.answer(f"Could not fetch from storage: {exc}")
+        return
+    is_png = payload.startswith(b"\x89PNG")
+    mode = row.get("mode") or "bg"
+    caption = f"mode: {mode} | background: {row.get('prompt') or 'default'}"
+    if is_png:
+        await message.answer_document(BufferedInputFile(payload, filename="result.png"), caption=caption)
+    else:
+        await message.answer_photo(BufferedInputFile(payload, filename="result.jpg"), caption=caption)
+
+
+@dp.message(Command("sync"))
+async def cmd_sync(message: Message) -> None:
+    if not await _require_owner(message):
+        return
+    if local_store is None:
+        await message.answer("Offline storage is turned off (OFFLINE_STORE_ENABLED=0).")
+        return
+    queued = sum(local_store.counts())
+    if queued == 0:
+        await message.answer("Nothing pending - the local outbox is empty.")
+        return
+    if db is None:
+        await message.answer(
+            f"{queued} item(s) are saved locally, but Supabase is not configured "
+            "(set SUPABASE_URL and SUPABASE_API_KEY in .env)."
+        )
+        return
+    await message.answer(f"Uploading {queued} queued item(s)...")
+    try:
+        summary = await sync_pending(db, local_store)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sync failed: %s", exc)
+        await message.answer(f"Sync failed: {exc}")
+        return
+    remaining = summary.get("remaining", sum(local_store.counts()))
+    await message.answer(
+        f"Synced {summary['media']} photo(s) and {summary['chats']} chat turn(s).\n"
+        f"Failed: {summary['failed']} | still queued: {remaining}"
+    )
+
+
 @dp.callback_query(F.data == "menu")
 async def cb_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
@@ -268,6 +379,10 @@ async def cb_mode_chat(callback: CallbackQuery, state: FSMContext) -> None:
 @dp.message(Modes.chat, F.text)
 async def on_chat_text(message: Message, state: FSMContext) -> None:
     if not _authorized(message) or not message.from_user:
+        return
+    wait = _cooldown_seconds(message)
+    if wait > 0:
+        await message.answer(f"⏳ Please wait {wait:.0f}s before the next request.")
         return
     text = (message.text or "").strip()
     if not text:
@@ -324,6 +439,10 @@ async def on_combine_subject(message: Message, state: FSMContext) -> None:
 async def on_combine_background(message: Message, state: FSMContext) -> None:
     if not _authorized(message) or not message.from_user:
         return
+    wait = _cooldown_seconds(message)
+    if wait > 0:
+        await message.answer(f"⏳ Please wait {wait:.0f}s before the next request.")
+        return
     data = await state.get_data()
     subject = data.get("subject")
     if not subject:
@@ -369,6 +488,10 @@ async def on_combine_background(message: Message, state: FSMContext) -> None:
 @dp.message(Modes.cloth, F.photo)
 async def on_cloth(message: Message, state: FSMContext) -> None:
     if not _authorized(message) or not message.from_user:
+        return
+    wait = _cooldown_seconds(message)
+    if wait > 0:
+        await message.answer(f"⏳ Please wait {wait:.0f}s before the next request.")
         return
     status = await message.answer("👕 Changing garment color...")
     await _chat_action(message, "upload_photo")
@@ -438,6 +561,10 @@ async def on_prompt_text_photo(message: Message) -> None:
 @dp.message(Modes.prompt_text, F.text)
 async def on_prompt_text(message: Message, state: FSMContext) -> None:
     if not _authorized(message) or not message.from_user:
+        return
+    wait = _cooldown_seconds(message)
+    if wait > 0:
+        await message.answer(f"⏳ Please wait {wait:.0f}s before the next request.")
         return
     data = await state.get_data()
     source = data.get("prompt_source")
@@ -519,6 +646,10 @@ async def on_mode_needs_photo(message: Message) -> None:
 async def on_photo(message: Message) -> None:
     if not _authorized(message) or not message.from_user or not message.photo:
         return
+    wait = _cooldown_seconds(message)
+    if wait > 0:
+        await message.answer(f"⏳ Please wait {wait:.0f}s before the next request.")
+        return
     status = await message.answer("⚙️ Processing photo...")
     await _chat_action(message, "upload_photo")
     started = time.perf_counter()
@@ -588,6 +719,11 @@ async def main() -> None:
         log.info("registered %d bot commands for the chat input menu", len(BOT_COMMANDS))
     except Exception as exc:  # noqa: BLE001
         log.warning("could not register bot commands: %s", exc)
+    if config.OWNER_USER_ID:
+        log.info("admin commands enabled for user %s (hidden from the menu)", config.OWNER_USER_ID)
+    else:
+        log.warning("OWNER_USER_ID not set - hidden admin commands (stats, last, sync) are disabled")
+    log.info("per-user cooldown: %.0fs", config.COOLDOWN_SECONDS)
     if local_store is not None and db is not None:
         pending = sum(local_store.counts())
         if pending:
