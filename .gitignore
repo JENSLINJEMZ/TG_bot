@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+*.onnx
+uv.lock
+.pytest_cache/
+data/
+*.db
+bot.log
+admin_downloads/
+supabase/.temp/

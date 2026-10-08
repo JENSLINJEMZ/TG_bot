@@ -1,0 +1,32 @@
+[project]
+name = "tgbot"
+version = "0.1.0"
+description = "Telegram bot that swaps photo backgrounds locally with rembg and stores media in Supabase"
+requires-python = ">=3.11,<4.0"
+dependencies = [
+    "aiogram>=3.31,<4",
+    "rembg>=2.0.85",
+    "onnxruntime>=1.20",
+    "pillow>=10",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "torch>=2.7",
+    "torchvision>=0.22",
+    "diffusers>=0.41.0",
+    "transformers>=5.19.0",
+    "accelerate>=1.15.0",
+    "safetensors>=0.8.0",
+]
+
+[tool.uv]
+package = false
+# lets uv pick the CPU torch wheel from the extra index alongside PyPI
+index-strategy = "unsafe-best-match"
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cpu"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
