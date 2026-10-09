@@ -494,10 +494,10 @@ async def on_chat_text(message: Message, state: FSMContext) -> None:
             except Exception:
                 pass
             return
-        history = (
+        updated_history = (
             list(history) + [{"role": "user", "content": text}, {"role": "assistant", "content": answer}]
         )[-2 * config.CHAT_HISTORY_TURNS :] if config.CHAT_HISTORY_TURNS > 0 else []
-        await state.update_data(chat_history=history)
+        await state.update_data(chat_history=updated_history)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         stored = await storage.save_chat(
             chat_id=message.chat.id,
