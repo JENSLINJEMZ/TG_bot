@@ -67,9 +67,12 @@ def _get_model():
 
         _log_info("loading chat model %s" % config.CHAT_MODEL)
         torch = _torch()
-        _tokenizer = AutoTokenizer.from_pretrained(config.CHAT_MODEL, local_files_only=True)
+        revision = config.CHAT_REVISION or None
+        _tokenizer = AutoTokenizer.from_pretrained(
+            config.CHAT_MODEL, local_files_only=True, revision=revision
+        )
         _model = AutoModelForCausalLM.from_pretrained(
-            config.CHAT_MODEL, local_files_only=True, dtype=torch.float32
+            config.CHAT_MODEL, local_files_only=True, dtype=torch.float32, revision=revision
         )
         _model.eval()
         _log_info("chat model ready")

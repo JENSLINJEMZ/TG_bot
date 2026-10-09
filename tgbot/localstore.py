@@ -96,10 +96,19 @@ class LocalStore:
     """SQLite-backed outbox of rows that still need to reach Supabase."""
 
     def __init__(self, path: str | Path) -> None:
+        import os
+
         self.path = Path(path)
         if self.path.parent and str(self.path.parent) not in ("", "."):
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
+        # the outbox holds raw chat text and image bytes - keep it owner-only
+        try:
+            os.chmod(self.path, 0o600)
+            if self.path.parent and str(self.path.parent) not in ("", "."):
+                os.chmod(self.path.parent, 0o700)
+        except OSError:
+            pass
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)

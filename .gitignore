@@ -3,7 +3,6 @@ __pycache__/
 *.pyc
 .env
 *.onnx
-uv.lock
 .pytest_cache/
 data/
 *.db

@@ -11,14 +11,35 @@ from .bgchange import parse_hex
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+# .env holds the bot token and the Supabase secret key - keep it owner-only
+_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+try:
+    if _ENV_PATH.exists():
+        os.chmod(_ENV_PATH, 0o600)
+except OSError:
+    pass
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
-SUPABASE_API_KEY = (os.getenv("SUPABASE_API_KEY", "") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
+# The bot is server-side and must authenticate with the SECRET key, because the
+# hardened RLS (supabase/migration.sql) denies the anon/publishable role any
+# access. A plain SUPABASE_API_KEY is accepted as a fallback but is only safe
+# while RLS is still wide open - see SUPABASE_USING_SECRET below.
+SUPABASE_SECRET_KEY = (
+    os.getenv("SUPABASE_SECRET_KEY", "") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+).strip()
+SUPABASE_API_KEY = SUPABASE_SECRET_KEY or (os.getenv("SUPABASE_API_KEY", "") or "").strip()
+SUPABASE_USING_SECRET = bool(SUPABASE_SECRET_KEY)
 SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "tg-bot-media").strip() or "tg-bot-media"
 SUPABASE_ENABLED = bool(SUPABASE_URL and SUPABASE_API_KEY)
 DEFAULT_BACKGROUND = parse_hex(os.getenv("DEFAULT_BACKGROUND", "#ffffff") or "#ffffff")
 MAX_IMAGE_DIM = max(512, int(os.getenv("MAX_IMAGE_DIM", "1600") or "1600"))
 MAX_CONCURRENT = max(1, int(os.getenv("MAX_CONCURRENT", "1") or "1"))
+# reject oversized uploads before decoding them (decompression-bomb / RAM guard)
+MAX_PHOTO_BYTES = max(1, int(os.getenv("MAX_PHOTO_BYTES", str(15 * 1024 * 1024)) or "0"))
+# pin model weights to an immutable revision (env empty = tracking the main branch)
+DIFFUSE_REVISION = os.getenv("DIFFUSE_REVISION", "cad0bd7495fa6c4bcca01b19a723dc91627fe84f").strip()
+CHAT_REVISION = os.getenv("CHAT_REVISION", "12fd25f77366fa6b3b4b768ec3050bf629380bac").strip()
 ALLOWED_USERS = {
     int(item)
     for item in os.getenv("ALLOWED_USERS", "").replace(";", ",").split(",")

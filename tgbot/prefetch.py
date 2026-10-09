@@ -27,11 +27,11 @@ def prefetch_rembg(name: str = "u2net") -> None:
     print(f"  rembg {name}: ready", flush=True)
 
 
-def prefetch_hf(repo: str, ignore: list[str] | None = None) -> None:
+def prefetch_hf(repo: str, ignore: list[str] | None = None, revision: str | None = None) -> None:
     from huggingface_hub import snapshot_download
 
-    print(f"  {repo}: downloading (if needed)...", flush=True)
-    snapshot_download(repo, ignore_patterns=ignore)
+    print(f"  {repo}@{revision or 'main'}: downloading (if needed)...", flush=True)
+    snapshot_download(repo, ignore_patterns=ignore, revision=revision or None)
     print(f"  {repo}: ready", flush=True)
 
 
@@ -45,12 +45,12 @@ def main() -> None:
         print(f"  rembg prefetch failed: {exc}", flush=True)
     if config.DIFFUSE_ENABLED:
         try:
-            prefetch_hf(config.DIFFUSE_MODEL, ignore=_DIFFUSION_SKIP)
+            prefetch_hf(config.DIFFUSE_MODEL, ignore=_DIFFUSION_SKIP, revision=config.DIFFUSE_REVISION)
         except Exception as exc:  # noqa: BLE001
             print(f"  {config.DIFFUSE_MODEL} prefetch failed: {exc}", flush=True)
     if config.CHAT_ENABLED:
         try:
-            prefetch_hf(config.CHAT_MODEL)
+            prefetch_hf(config.CHAT_MODEL, revision=config.CHAT_REVISION)
         except Exception as exc:  # noqa: BLE001
             print(f"  {config.CHAT_MODEL} prefetch failed: {exc}", flush=True)
     print("Done. Models live in ~/.u2net and the HuggingFace cache.", flush=True)

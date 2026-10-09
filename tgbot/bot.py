@@ -119,6 +119,13 @@ def _authorized(message: Message) -> bool:
     return bool(user and user.id in config.ALLOWED_USERS)
 
 
+def _authorized_cb(callback: CallbackQuery) -> bool:
+    if not config.ALLOWED_USERS:
+        return True
+    user = callback.from_user
+    return bool(user and user.id in config.ALLOWED_USERS)
+
+
 def _is_owner(message: Message) -> bool:
     user = message.from_user
     return bool(user and config.OWNER_USER_ID and user.id == config.OWNER_USER_ID)
@@ -220,7 +227,13 @@ async def _download_photo(message: Message) -> bytes:
     file = await message.bot.get_file(photo.file_id)
     buffer = io.BytesIO()
     await message.bot.download(file, destination=buffer)
-    return buffer.getvalue()
+    data = buffer.getvalue()
+    if len(data) > config.MAX_PHOTO_BYTES:
+        raise ValueError(
+            f"photo is too large ({len(data) // (1024 * 1024)} MB, "
+            f"max {config.MAX_PHOTO_BYTES // (1024 * 1024)} MB)"
+        )
+    return data
 
 
 async def _send_processing_sticker(message: Message) -> Message | None:
@@ -396,6 +409,9 @@ async def cmd_sync(message: Message) -> None:
 
 @dp.callback_query(F.data == "menu")
 async def cb_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _authorized_cb(callback):
+        await callback.answer()
+        return
     await state.clear()
     await callback.message.edit_text("Pick an operation 👇", reply_markup=menu_keyboard())
     await callback.answer()
@@ -403,6 +419,9 @@ async def cb_menu(callback: CallbackQuery, state: FSMContext) -> None:
 
 @dp.callback_query(F.data == "mode_combine")
 async def cb_mode_combine(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _authorized_cb(callback):
+        await callback.answer()
+        return
     await state.set_state(Modes.combine_subject)
     await callback.message.edit_text("🧩 Send the first image.")
     await callback.answer()
@@ -410,6 +429,9 @@ async def cb_mode_combine(callback: CallbackQuery, state: FSMContext) -> None:
 
 @dp.callback_query(F.data == "mode_cloth")
 async def cb_mode_cloth(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _authorized_cb(callback):
+        await callback.answer()
+        return
     await state.set_state(Modes.cloth)
     await callback.message.edit_text(
         "👕 Send a photo of a person. Caption optional: a color "
@@ -421,6 +443,9 @@ async def cb_mode_cloth(callback: CallbackQuery, state: FSMContext) -> None:
 
 @dp.callback_query(F.data == "mode_restyle")
 async def cb_mode_restyle(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _authorized_cb(callback):
+        await callback.answer()
+        return
     await state.set_state(Modes.prompt_image)
     await callback.message.edit_text("✨ Send a photo of a person you want to restyle.")
     await callback.answer()
@@ -428,6 +453,9 @@ async def cb_mode_restyle(callback: CallbackQuery, state: FSMContext) -> None:
 
 @dp.callback_query(F.data == "mode_chat")
 async def cb_mode_chat(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _authorized_cb(callback):
+        await callback.answer()
+        return
     if not config.CHAT_ENABLED:
         await callback.answer("💬 Chat is disabled.", show_alert=True)
         return
@@ -501,7 +529,12 @@ async def on_chat_needs_text(message: Message) -> None:
 async def on_combine_subject(message: Message, state: FSMContext) -> None:
     if not _authorized(message) or not message.from_user:
         return
-    source = await _download_photo(message)
+    try:
+        source = await _download_photo(message)
+    except Exception:
+        log.exception("combine: subject download failed")
+        await message.answer("❌ Could not download that photo - try again from /menu.")
+        return
     await state.update_data(subject=source)
     await state.set_state(Modes.combine_background)
     await message.answer("🧩 Got it! Now send the second image (the background).")
@@ -646,7 +679,12 @@ async def on_cloth(message: Message, state: FSMContext) -> None:
 async def on_prompt_image(message: Message, state: FSMContext) -> None:
     if not _authorized(message) or not message.from_user:
         return
-    source = await _download_photo(message)
+    try:
+        source = await _download_photo(message)
+    except Exception:
+        log.exception("restyle: source download failed")
+        await message.answer("❌ Could not download that photo - try again from /menu.")
+        return
     await state.update_data(prompt_source=source, prompt_file_id=message.photo[-1].file_id)
     await state.set_state(Modes.prompt_text)
     await message.answer(
@@ -816,6 +854,12 @@ async def main() -> None:
     else:
         log.warning("OWNER_USER_ID not set - hidden admin commands (stats, last, sync) are disabled")
     log.info("per-user cooldown: %.0fs", config.COOLDOWN_SECONDS)
+    if config.SUPABASE_ENABLED and not config.SUPABASE_USING_SECRET:
+        log.warning(
+            "Supabase is configured with a publishable/anon key - the hardened RLS "
+            "denies it, so storage writes will fall back to the local outbox. "
+            "Set SUPABASE_SECRET_KEY in .env to enable remote storage."
+        )
     if local_store is not None and db is not None:
         pending = sum(local_store.counts())
         if pending:

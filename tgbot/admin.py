@@ -31,10 +31,14 @@ def _db() -> Supabase:
     )
 
 
-async def _select_all(db: Supabase, user_id: int | None, limit: int) -> list[dict]:
+async def _select_all(
+    db: Supabase, user_id: int | None, limit: int, row_id: str | None = None
+) -> list[dict]:
     params = {"select": "*", "order": "created_at.desc", "limit": str(limit)}
     if user_id is not None:
         params["user_id"] = f"eq.{user_id}"
+    if row_id:
+        params["id"] = f"eq.{row_id}"
     response = await db._request("GET", "/rest/v1/tg_media", params=params)
     if response.status_code >= 400:
         raise RuntimeError(f"select failed ({response.status_code}): {response.text[:300]}")
@@ -72,9 +76,11 @@ async def cmd_list(db: Supabase, args: argparse.Namespace) -> None:
 async def cmd_download(db: Supabase, args: argparse.Namespace) -> None:
     if args.all:
         rows = await _select_all(db, None, 10_000)
+    elif args.id:
+        rows = await _select_all(db, None, 1, row_id=args.id)
     else:
-        rows = await _select_all(db, None, 1)
-        rows = [r for r in rows if r["id"] == args.id]
+        print("specify --id <uuid> or --all")
+        return
     if not rows:
         print("no matching rows")
         return

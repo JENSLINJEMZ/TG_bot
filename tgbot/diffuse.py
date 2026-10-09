@@ -62,32 +62,44 @@ def _torch_dtype():
 def _module(name: str):
     """Load one pipeline component from the local cache (no network)."""
     repo = config.DIFFUSE_MODEL
+    revision = config.DIFFUSE_REVISION or None
     dtype = _torch_dtype()
     torch.set_num_threads(config.DIFFUSE_THREADS)
     if name == "text_encoder":
         from transformers import CLIPTextModel
 
         return CLIPTextModel.from_pretrained(
-            repo, subfolder="text_encoder", local_files_only=True, torch_dtype=dtype
+            repo, subfolder="text_encoder", local_files_only=True, torch_dtype=dtype, revision=revision
         )
     if name == "tokenizer":
         from transformers import CLIPTokenizer
 
-        return CLIPTokenizer.from_pretrained(repo, subfolder="tokenizer", local_files_only=True)
+        return CLIPTokenizer.from_pretrained(
+            repo, subfolder="tokenizer", local_files_only=True, revision=revision
+        )
     if name == "vae":
         from diffusers import AutoencoderKL
 
-        return AutoencoderKL.from_pretrained(repo, subfolder="vae", local_files_only=True, torch_dtype=dtype)
+        return AutoencoderKL.from_pretrained(
+            repo, subfolder="vae", local_files_only=True, torch_dtype=dtype, revision=revision
+        )
     if name == "unet":
         from diffusers import UNet2DConditionModel
 
         return UNet2DConditionModel.from_pretrained(
-            repo, subfolder="unet", local_files_only=True, torch_dtype=dtype, low_cpu_mem_usage=True
+            repo,
+            subfolder="unet",
+            local_files_only=True,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+            revision=revision,
         )
     if name == "scheduler":
         from diffusers import DPMSolverMultistepScheduler
 
-        return DPMSolverMultistepScheduler.from_pretrained(repo, subfolder="scheduler", local_files_only=True)
+        return DPMSolverMultistepScheduler.from_pretrained(
+            repo, subfolder="scheduler", local_files_only=True, revision=revision
+        )
     raise ValueError(name)
 
 
