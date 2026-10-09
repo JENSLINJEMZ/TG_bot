@@ -60,6 +60,13 @@ drop policy if exists "full access tg_chats" on public.tg_chats;
 revoke all on public.tg_media from anon, authenticated;
 revoke all on public.tg_chats from anon, authenticated;
 
+-- The bot authenticates with the secret key, which PostgREST maps to the
+-- service_role. That role bypasses RLS but still needs table privileges (the
+-- first migration only ever granted to anon/authenticated).
+grant usage on schema public to service_role;
+grant select, insert, update, delete on public.tg_media to service_role;
+grant select, insert, update, delete on public.tg_chats to service_role;
+
 -- Storage: keep the bucket private and expose no anon policy. The bot's secret
 -- key bypasses storage RLS, so uploads/downloads keep working.
 insert into storage.buckets (id, name, public)

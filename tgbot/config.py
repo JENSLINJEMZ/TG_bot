@@ -21,15 +21,40 @@ except OSError:
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+
+
+def _key_kind(key: str) -> str:
+    """Classify a Supabase API key without trusting which env var it came from."""
+    if not key:
+        return "none"
+    if key.startswith("sb_secret_"):
+        return "secret"
+    if key.startswith("sb_publishable_"):
+        return "publishable"
+    if key.startswith("eyJ"):
+        try:
+            import base64
+            import json
+
+            payload = key.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            role = json.loads(base64.urlsafe_b64decode(payload)).get("role")
+            return "secret" if role == "service_role" else "publishable"
+        except Exception:
+            return "unknown"
+    return "unknown"
+
+
 # The bot is server-side and must authenticate with the SECRET key, because the
 # hardened RLS (supabase/migration.sql) denies the anon/publishable role any
-# access. A plain SUPABASE_API_KEY is accepted as a fallback but is only safe
-# while RLS is still wide open - see SUPABASE_USING_SECRET below.
+# access. The key under SUPABASE_SECRET_KEY is inspected rather than trusted, so
+# pasting a publishable key there is caught instead of silently failing.
 SUPABASE_SECRET_KEY = (
     os.getenv("SUPABASE_SECRET_KEY", "") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 ).strip()
 SUPABASE_API_KEY = SUPABASE_SECRET_KEY or (os.getenv("SUPABASE_API_KEY", "") or "").strip()
-SUPABASE_USING_SECRET = bool(SUPABASE_SECRET_KEY)
+SUPABASE_KEY_KIND = _key_kind(SUPABASE_API_KEY)
+SUPABASE_USING_SECRET = SUPABASE_KEY_KIND == "secret"
 SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "tg-bot-media").strip() or "tg-bot-media"
 SUPABASE_ENABLED = bool(SUPABASE_URL and SUPABASE_API_KEY)
 DEFAULT_BACKGROUND = parse_hex(os.getenv("DEFAULT_BACKGROUND", "#ffffff") or "#ffffff")

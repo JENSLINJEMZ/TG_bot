@@ -856,9 +856,10 @@ async def main() -> None:
     log.info("per-user cooldown: %.0fs", config.COOLDOWN_SECONDS)
     if config.SUPABASE_ENABLED and not config.SUPABASE_USING_SECRET:
         log.warning(
-            "Supabase is configured with a publishable/anon key - the hardened RLS "
-            "denies it, so storage writes will fall back to the local outbox. "
-            "Set SUPABASE_SECRET_KEY in .env to enable remote storage."
+            "Supabase key looks like '%s', not a secret key - the hardened RLS "
+            "denies it, so storage falls back to the local outbox. Set "
+            "SUPABASE_SECRET_KEY to the sb_secret_... (or service_role) key in .env.",
+            config.SUPABASE_KEY_KIND,
         )
     if local_store is not None and db is not None:
         pending = sum(local_store.counts())
