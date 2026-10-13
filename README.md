@@ -108,7 +108,9 @@ the Nunchaku wheel), and creates `.env`.
 
 ```bash
 # Linux / macOS
-./install.sh                 # add --with-models to pre-download model weights
+./install.sh                 # install dependencies only
+./install.sh --with-models   # also pre-download every weight (editor ~27 GB + video;
+                             # adds the ComfyUI 14B pack when VIDEO_ENGINE=wan14b)
 ./install.sh --test          # also run the test suite
 
 # Windows (PowerShell)
@@ -134,13 +136,21 @@ git clone https://github.com/JENSLINJEMZ/TG_bot.git
 cd TG_bot
 cp .env.example .env          # then set TELEGRAM_BOT_TOKEN (from @BotFather)
 uv sync                       # creates .venv and installs all dependencies
-uv run python -m tgbot.prefetch   # optional: pre-download the model weights
+uv run python -m tgbot.prefetch   # optional: pre-download all model weights
 uv run python -m tgbot.bot
 ```
 
 > **Disk note:** the CUDA PyTorch build is ~4–5 GB (it bundles cuDNN/cuBLAS).
 > Model weights are stored under `models/` inside the project, not in your home
 > directory (`HF_HOME` / `U2NET_HOME` are redirected by `config.py`).
+>
+> **Model sizes:** without `--with-models` every weight downloads lazily on first
+> use. Passing `--with-models` fetches them up front: the chat/diffusion models
+> and background remover (small), the Qwen editor (~27 GB) and the in-process
+> video models. When `VIDEO_ENGINE=wan14b` it also downloads the ComfyUI Wan 14B
+> pack into `COMFY_DIR\models` — both Q3_K_M GGUFs, the UMT5-XXL encoder GGUF, the
+> Wan 2.1 VAE, both LightX2V 4-step LoRAs, ReActor (`inswapper_128.onnx`,
+> `GFPGANv1.4.pth`, the `buffalo_l` pack) and the Real-ESRGAN 2× upscaler.
 
 ---
 
@@ -288,6 +298,11 @@ LoadImage ─► WanImageToVideo ─► KSampler (high, Q3_K_M + LightX2V 4-step
   GGUF, the Wan 2.1 VAE, both LightX2V 4-step LoRAs, `inswapper_128.onnx`, the
   `buffalo_l` insightface pack, `GFPGANv1.4.pth` and `RealESRGAN_x2.pth`
   (`rife49.pth` lives in the Frame-Interpolation custom node's own `ckpts/`).
+
+Run `uv run python -m tgbot.prefetch` (or install with `--with-models`) to fetch
+that whole pack into `COMFY_DIR\models` automatically; it mirrors the ComfyUI-side
+`dl_models.py` / `dl_post.py`, so existing downloads are detected and skipped.
+`rife49.pth` is fetched by the Frame-Interpolation node itself on first use.
 
 Key settings:
 

@@ -112,7 +112,12 @@ def main() -> None:
         help=f"Python version for the project (default {DEFAULT_PYTHON}; use 'system' to skip pinning)",
     )
     parser.add_argument("--no-dev", action="store_true", help="skip the dev group (pytest)")
-    parser.add_argument("--with-models", action="store_true", help="pre-download the local models (~1.5 GB)")
+    parser.add_argument(
+        "--with-models",
+        action="store_true",
+        help="pre-download all model weights (GPU editor ~27 GB; "
+        "also the ComfyUI Wan 14B pack when VIDEO_ENGINE=wan14b)",
+    )
     parser.add_argument("--test", action="store_true", help="run the test suite after install")
     args = parser.parse_args()
 
@@ -139,7 +144,7 @@ def main() -> None:
     ensure_env_file()
 
     if args.with_models:
-        log("prefetching local models...")
+        log("prefetching local models (this can be tens of GB)...")
         run([uv, "run", "python", "-m", "tgbot.prefetch"])
 
     if args.test:
