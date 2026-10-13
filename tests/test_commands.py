@@ -9,7 +9,7 @@ BOT_PY = Path(__file__).resolve().parent.parent / "tgbot" / "bot.py"
 
 
 def _module_value(name: str) -> ast.AST:
-    tree = ast.parse(BOT_PY.read_text())
+    tree = ast.parse(BOT_PY.read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
             isinstance(t, ast.Name) and t.id == name for t in node.targets
@@ -36,7 +36,7 @@ def _admin_commands() -> set[str]:
 
 
 def _registered_commands() -> set[str]:
-    tree = ast.parse(BOT_PY.read_text())
+    tree = ast.parse(BOT_PY.read_text(encoding="utf-8"))
     found: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -59,8 +59,8 @@ def test_menu_lists_exactly_the_registered_non_admin_handlers():
 
 
 def test_admin_commands_are_registered_but_hidden():
-    source = BOT_PY.read_text()
-    assert "return bool(user and config.OWNER_USER_ID" in source, "owner gate missing"
+    source = BOT_PY.read_text(encoding="utf-8")
+    assert "user_id == config.OWNER_USER_ID" in source, "owner gate missing"
     listed = {command for command, _ in _listed_commands()}
     for command in sorted(_admin_commands()):
         assert command in _registered_commands(), f"/{command} lost its handler"
@@ -72,7 +72,7 @@ def test_admin_commands_are_registered_but_hidden():
 
 
 def test_owner_gate_and_cooldown_are_defined_and_used():
-    source = BOT_PY.read_text()
+    source = BOT_PY.read_text(encoding="utf-8")
     assert "async def _require_owner" in source
     assert "def _cooldown_seconds" in source
     assert source.count("_cooldown_seconds(") >= 6, "cooldown should gate each heavy handler"
@@ -91,7 +91,7 @@ def test_menu_commands_are_well_formed():
 
 
 def test_menu_button_labels_lead_with_an_emoji():
-    source = BOT_PY.read_text()
+    source = BOT_PY.read_text(encoding="utf-8")
     keyboard = source.split("def menu_keyboard", 1)[1].split("\ndef ", 1)[0]
     labels = re.findall(r'text="([^"]+)"', keyboard)
     assert labels[:4], "menu keyboard lost its buttons"

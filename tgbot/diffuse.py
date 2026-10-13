@@ -23,6 +23,7 @@ import torch
 from PIL import Image
 
 from . import config
+from .progress import report
 
 _log = None
 
@@ -62,32 +63,44 @@ def _torch_dtype():
 def _module(name: str):
     """Load one pipeline component from the local cache (no network)."""
     repo = config.DIFFUSE_MODEL
+    revision = config.DIFFUSE_REVISION or None
     dtype = _torch_dtype()
     torch.set_num_threads(config.DIFFUSE_THREADS)
     if name == "text_encoder":
         from transformers import CLIPTextModel
 
         return CLIPTextModel.from_pretrained(
-            repo, subfolder="text_encoder", local_files_only=True, torch_dtype=dtype
+            repo, subfolder="text_encoder", local_files_only=True, torch_dtype=dtype, revision=revision
         )
     if name == "tokenizer":
         from transformers import CLIPTokenizer
 
-        return CLIPTokenizer.from_pretrained(repo, subfolder="tokenizer", local_files_only=True)
+        return CLIPTokenizer.from_pretrained(
+            repo, subfolder="tokenizer", local_files_only=True, revision=revision
+        )
     if name == "vae":
         from diffusers import AutoencoderKL
 
-        return AutoencoderKL.from_pretrained(repo, subfolder="vae", local_files_only=True, torch_dtype=dtype)
+        return AutoencoderKL.from_pretrained(
+            repo, subfolder="vae", local_files_only=True, torch_dtype=dtype, revision=revision
+        )
     if name == "unet":
         from diffusers import UNet2DConditionModel
 
         return UNet2DConditionModel.from_pretrained(
-            repo, subfolder="unet", local_files_only=True, torch_dtype=dtype, low_cpu_mem_usage=True
+            repo,
+            subfolder="unet",
+            local_files_only=True,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+            revision=revision,
         )
     if name == "scheduler":
         from diffusers import DPMSolverMultistepScheduler
 
-        return DPMSolverMultistepScheduler.from_pretrained(repo, subfolder="scheduler", local_files_only=True)
+        return DPMSolverMultistepScheduler.from_pretrained(
+            repo, subfolder="scheduler", local_files_only=True, revision=revision
+        )
     raise ValueError(name)
 
 
@@ -140,6 +153,7 @@ def _img2img(prompt: str, image: Image.Image) -> bytes:
     device = torch.device("cpu")
 
     # phase 1 - text encoding (transient: released before the UNet loads)
+    report(2, "encoding prompt", label="diffusion")
     tokenizer = _module("tokenizer")
     text_encoder = _module("text_encoder")
     text_inputs = tokenizer(
@@ -156,6 +170,7 @@ def _img2img(prompt: str, image: Image.Image) -> bytes:
     _release()
 
     # phase 2 - VAE encode to get the img2img starting latents (transient)
+    report(12, "encoding image", label="diffusion")
     vae = _module("vae")
     pixels = _to_vae_input(image)
     with torch.inference_mode():
@@ -172,7 +187,12 @@ def _img2img(prompt: str, image: Image.Image) -> bytes:
     noise = torch.randn_like(init_latents)
     latents = scheduler.add_noise(init_latents.to(device), noise.to(device), timesteps[:1].to(device))
     _log_info("phase 3 denoise start steps=%d" % len(timesteps))
-    for t in timesteps:
+    for index, t in enumerate(timesteps):
+        report(
+            25 + 60 * (index + 1) / max(1, len(timesteps)),
+            "denoising",
+            label="diffusion",
+        )
         model_input = scheduler.scale_model_input(latents, t)
         with torch.inference_mode():
             noise_pred = unet(model_input, t, encoder_hidden_states=prompt_embeds).sample
@@ -185,6 +205,7 @@ def _img2img(prompt: str, image: Image.Image) -> bytes:
         _drop_unet()
 
     # phase 4 - VAE decode (reloaded: it was released after phase 2)
+    report(90, "decoding image", label="diffusion")
     vae = _module("vae")
     with torch.inference_mode():
         decoded = vae.decode(latents / vae.config.scaling_factor).sample
@@ -195,6 +216,7 @@ def _img2img(prompt: str, image: Image.Image) -> bytes:
     array = ((array + 1) / 2 * 255).round().to(torch.uint8).permute(1, 2, 0).cpu().numpy()
     buffer = io.BytesIO()
     Image.fromarray(array).save(buffer, format="JPEG", quality=92)
+    report(100, "finishing", label="diffusion")
     return buffer.getvalue()
 
 

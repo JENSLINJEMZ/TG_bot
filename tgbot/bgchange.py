@@ -9,6 +9,11 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
+# decompression-bomb guard: photos are downscaled to MAX_IMAGE_DIM anyway, so a
+# full decode of anything past ~40 MP is either hostile or pointless (PIL hard-
+# errors above 2x this value, warns above it)
+Image.MAX_IMAGE_PIXELS = 20_000_000
+
 NAMED_COLORS: dict[str, tuple[int, int, int]] = {
     "white": (255, 255, 255),
     "black": (0, 0, 0),

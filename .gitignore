@@ -3,10 +3,10 @@ __pycache__/
 *.pyc
 .env
 *.onnx
-uv.lock
+models/
 .pytest_cache/
 data/
 *.db
 bot.log
 admin_downloads/
-supabase/.temp/
+output/

@@ -67,9 +67,12 @@ def _get_model():
 
         _log_info("loading chat model %s" % config.CHAT_MODEL)
         torch = _torch()
-        _tokenizer = AutoTokenizer.from_pretrained(config.CHAT_MODEL, local_files_only=True)
+        revision = config.CHAT_REVISION or None
+        _tokenizer = AutoTokenizer.from_pretrained(
+            config.CHAT_MODEL, local_files_only=True, revision=revision
+        )
         _model = AutoModelForCausalLM.from_pretrained(
-            config.CHAT_MODEL, local_files_only=True, dtype=torch.float32
+            config.CHAT_MODEL, local_files_only=True, dtype=torch.float32, revision=revision
         )
         _model.eval()
         _log_info("chat model ready")
@@ -101,10 +104,12 @@ def reply(text: str, history: list[dict] | None = None) -> tuple[str, float]:
     started = time.perf_counter()
     from . import config
     from .diffuse import unload as unload_diffusion
+    from .progress import report
 
     # the cached image UNet would otherwise sit in RAM next to the LLM
     unload_diffusion()
 
+    report(2, "loading model", label="chat")
     model, tokenizer = _get_model()
     torch = _torch()
     messages = build_messages(text, history)
@@ -113,16 +118,35 @@ def reply(text: str, history: list[dict] | None = None) -> tuple[str, float]:
     )
     input_ids = encoded["input_ids"]
     _log_info("generating reply")
+    report(10, "thinking", label="chat")
+
+    max_new = max(16, config.CHAT_MAX_NEW_TOKENS)
+
+    class _TokenProgress(StoppingCriteria):
+        """Report per-token generation progress into the shared tracker."""
+
+        def __init__(self) -> None:
+            self.seen = 0
+
+        def __call__(self, in_ids, scores, **kwargs) -> bool:
+            self.seen += 1
+            report(10 + 80 * self.seen / max(1, max_new), "writing reply", label="chat")
+            return False
+
+    from transformers import StoppingCriteriaList
+
     with torch.inference_mode():
         output = model.generate(
             input_ids,
             attention_mask=encoded.get("attention_mask"),
-            max_new_tokens=max(16, config.CHAT_MAX_NEW_TOKENS),
+            max_new_tokens=max_new,
             do_sample=True,
             temperature=0.7,
             top_p=0.9,
             pad_token_id=tokenizer.eos_token_id,
+            stopping_criteria=StoppingCriteriaList([_TokenProgress()]),
         )
+    report(100, "finishing", label="chat")
     answer = tokenizer.decode(output[0][input_ids.shape[-1] :], skip_special_tokens=True).strip()
     if not answer:
         answer = "I'm not sure how to answer that."
