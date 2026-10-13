@@ -1,8 +1,8 @@
 [project]
 name = "tgbot"
 version = "0.1.0"
-description = "Telegram bot that swaps photo backgrounds locally with rembg and stores media in Supabase"
-requires-python = ">=3.11,<4.0"
+description = "Telegram bot that swaps photo backgrounds locally with rembg and archives media in a local SQLite database"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "aiogram>=3.31,<4",
     "rembg>=2.0.85",
@@ -10,21 +10,29 @@ dependencies = [
     "pillow>=10",
     "httpx>=0.27",
     "python-dotenv>=1.0",
-    "torch>=2.7",
-    "torchvision>=0.22",
+    "torch>=2.11,<2.12",
+    "torchvision>=0.26,<0.27",
     "diffusers>=0.41.0",
     "transformers>=5.19.0",
     "accelerate>=1.15.0",
     "safetensors>=0.8.0",
+    "imageio>=2.34",
+    "imageio-ffmpeg>=0.6",
+    "ftfy>=6.2.0",
+    "peft>=0.21.2",
+    "sentencepiece>=0.2.2",
+    "einops>=0.8.2",
+    "hf-transfer>=0.1.9",
+    "nunchaku @ https://github.com/nunchaku-tech/nunchaku/releases/download/v1.3.0dev20260213/nunchaku-1.3.0.dev20260213+cu12.8torch2.11-cp312-cp312-win_amd64.whl",
 ]
 
 [tool.uv]
 package = false
-# lets uv pick the CPU torch wheel from the extra index alongside PyPI
+# lets uv pick the CUDA torch wheel from the extra index alongside PyPI
 index-strategy = "unsafe-best-match"
 
 [[tool.uv.index]]
-url = "https://download.pytorch.org/whl/cpu"
+url = "https://download.pytorch.org/whl/cu128"
 
 [dependency-groups]
 dev = [

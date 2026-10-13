@@ -150,7 +150,7 @@ def main() -> None:
     log("installation complete.")
     print(
         "\nNext steps:\n"
-        f"  1. edit {ROOT / '.env'} and set TELEGRAM_BOT_TOKEN (and Supabase keys if you use storage)\n"
+        f"  1. edit {ROOT / '.env'} and set TELEGRAM_BOT_TOKEN\n"
         "  2. start the bot:   uv run python -m tgbot.bot\n"
         + ("" if args.with_models else
            "  3. models download automatically on first use, or pre-download now:\n"
