@@ -10,7 +10,7 @@ Background removal · AI outfit / scene editing · image-to-video · a small cha
 [![aiogram](https://img.shields.io/badge/aiogram-3.x-2CA5E0.svg)](https://docs.aiogram.dev/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.11%20%2B%20CUDA-EE4C2C.svg)](https://pytorch.org/)
 [![Runs locally](https://img.shields.io/badge/inference-local-success.svg)](#how-it-works)
-[![Tests](https://img.shields.io/badge/tests-53%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-97%20passing-brightgreen.svg)](#testing)
 
 </div>
 
@@ -262,6 +262,37 @@ Use `/cancel` to leave a mode.
 
 ---
 
+## Web chat UI
+
+The same local chat model is also available as a Claude-style web app in
+[`web/`](web/). It is a separate [aiohttp](https://docs.aiohttp.org/) process
+(no FastAPI/uvicorn needed) and uses its own SQLite database, so it can run next
+to the bot.
+
+```bash
+uv run python -m web                 # http://127.0.0.1:8765/
+uv run python -m web --port 9000     # custom port
+uv run python -m web --no-browser    # do not open a tab
+```
+
+- Sessions, titles, renames and deletes are persisted in `data/web.db`
+  (`WEB_STORE_PATH`), with WAL + a busy timeout.
+- Replies stream token-by-token over SSE; the **Stop** button cancels at the
+  next token and keeps the partial answer.
+- **Vertex Core / Max / Lite** map to real sampling presets (reply length,
+  temperature, top-p) on the single SmolLM2-135M model.
+- Deep links work: `http://127.0.0.1:8765/?s=<session-id>`. **Share** copies one.
+- Search filters the recents list; `Ctrl/Cmd+Shift+O` starts a new chat.
+- The UI is the original Vertex shell, with the two fonts vendored under
+  `web/static/fonts/` so it looks the same offline.
+- Localhost only by default. Set `WEB_TOKEN` to also require
+  `X-Web-Token`/`?token=`, and `WEB_HOST`/`WEB_PORT` to change the bind.
+
+> The web process loads its own copy of the chat model. Run it alongside the
+> Telegram bot only if you have the RAM (roughly 1 GB extra while chatting).
+
+---
+
 ## Video
 
 Send a photo, describe the motion, then pick a clip length (buttons come from
@@ -391,6 +422,11 @@ tgbot/
   localstore.py   SQLite archive
   admin.py        CLI to list / export the archive
   prefetch.py     pre-download the model weights
+web/
+  app.py          aiohttp routes, SSE endpoint, static files
+  service.py      single-flight chat streaming bridge + presets
+  store.py        SQLite sessions/messages (data/web.db, WAL)
+  static/         the Vertex shell (index.html, app.js, fonts)
 install.sh        bootstrap installer (Linux / macOS)
 install.ps1       bootstrap installer (Windows)
 install.py        cross-platform installer (stdlib-only)
@@ -402,11 +438,12 @@ tests/            pytest suite
 ## Testing
 
 ```bash
-uv run pytest tests/ -q      # 53 tests
+uv run pytest tests/ -q      # 97 tests
 ```
 
 The suite covers colour parsing, the outfit guard, scheduling/queueing, storage,
-the local store, chat and rate limiting.
+the local store, chat and rate limiting, plus the web session store, SSE service,
+aiohttp API and the Vertex shell's fidelity.
 
 ---
 

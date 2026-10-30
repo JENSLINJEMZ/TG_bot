@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vertex</title>
+<link href="/static/fonts.css" rel="stylesheet">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<style>
+:root{--bg:#f6f8fb;--side:#eef2f7;--surf:#fff;--tx:#0f172a;--mu:#64748b;--bd:#dde3ec;--hv:#e4eaf2;--ac:#0d9488;--ac2:#0f766e;--sh:0 4px 24px rgba(15,23,42,.07);--code:#eef2f7;
+--serif:"Space Grotesk",Inter,sans-serif;--sans:Inter,-apple-system,"Segoe UI",Roboto,sans-serif;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b1220;--side:#0a0f1a;--surf:#131c2e;--tx:#e6edf7;--mu:#8a98ad;--bd:#223049;--hv:#172238;--ac:#14b8a6;--ac2:#2dd4bf;--sh:0 4px 24px rgba(0,0,0,.45);--code:#0a0f1a}}
+:root[data-theme="dark"]{--bg:#0b1220;--side:#0a0f1a;--surf:#131c2e;--tx:#e6edf7;--mu:#8a98ad;--bd:#223049;--hv:#172238;--ac:#14b8a6;--ac2:#2dd4bf;--sh:0 4px 24px rgba(0,0,0,.45);--code:#0a0f1a}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{background:var(--bg);color:var(--tx);font:15px/1.6 var(--sans);overflow:hidden;transition:background .3s,color .3s;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+svg{flex:none}
+.app{display:flex;height:100%}
+/* sidebar */
+.side{width:276px;background:var(--side);border-right:1px solid var(--bd);display:flex;flex-direction:column;transition:margin .35s cubic-bezier(.4,0,.2,1),transform .35s;z-index:20}
+.app.closed .side{margin-left:-276px}
+.sh{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 8px}
+.brand{font:500 22px var(--serif);letter-spacing:-.4px;padding-left:6px}
+.ib{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;color:var(--mu);transition:.15s}
+.ib:hover{background:var(--hv);color:var(--tx)}
+.nav{padding:6px 10px;display:flex;flex-direction:column;gap:2px}
+.ni{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:var(--tx);font-size:14px;text-align:left;transition:.15s}
+.ni:hover{background:var(--hv)}
+.ni.new{color:var(--ac);font-weight:500}
+.ni.new .pl{width:22px;height:22px;border-radius:50%;background:var(--ac);color:#fff;display:grid;place-items:center;transition:transform .3s}
+.ni.new:hover .pl{transform:rotate(90deg)}
+.lbl{font-size:12px;color:var(--mu);padding:16px 18px 6px;font-weight:500}
+.rec{flex:1;overflow:auto;padding:0 10px}
+.ci{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border-radius:8px;font-size:14px;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;animation:slin .4s both}
+.ci span{overflow:hidden;text-overflow:ellipsis}
+.ci:hover,.ci.on{background:var(--hv)}
+.ci i{opacity:0;color:var(--mu);font-style:normal;letter-spacing:1px}
+.ci:hover i{opacity:1}
+@keyframes slin{from{opacity:0;transform:translateX(-8px)}}
+.user{display:flex;align-items:center;gap:10px;padding:12px 14px;border-top:1px solid var(--bd);cursor:pointer}
+.user:hover{background:var(--hv)}
+.av{width:32px;height:32px;border-radius:50%;background:#0d9488;color:#fff;display:grid;place-items:center;font-weight:600;font-size:13px}
+.user b{font-weight:500;font-size:14px;display:block;line-height:1.2}
+.user small{color:var(--mu);font-size:12px}
+/* main */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.top{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;height:56px}
+.tl{display:flex;align-items:center;gap:4px}
+.app:not(.closed) .tl .open{display:none}
+.title{font-size:14px;color:var(--mu);opacity:0;transition:.3s}
+.chatting .title{opacity:1}
+.pill{padding:6px 12px;border:1px solid var(--bd);border-radius:8px;font-size:13px;color:var(--mu);transition:.15s}
+.pill:hover{background:var(--hv);color:var(--tx)}
+.scroll{flex:1;overflow:auto;scroll-behavior:smooth}
+.welcome{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px 20px 120px;transition:opacity .35s,transform .35s}
+.chatting .welcome,.chatting .hi{display:none}
+.hi{display:flex;align-items:center;justify-content:center;gap:14px;font:500 clamp(28px,5vw,40px)/1.2 var(--serif);letter-spacing:-.8px;animation:rise .8s .1s both;margin-bottom:26px;text-align:center}
+.logo{color:var(--ac)}
+.hi .logo{animation:spin 14s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}}
+.chat{max-width:760px;margin:0 auto;padding:16px 20px 200px;display:none}
+.chatting .chat{display:block}
+.msg{margin:22px 0;animation:rise .45s both}
+.msg.u{display:flex;justify-content:flex-end}
+.msg.u .b{background:var(--hv);padding:10px 16px;border-radius:16px;max-width:85%;white-space:pre-wrap}
+.msg.a{display:flex;gap:14px}
+.msg.a .logo{margin-top:3px}
+.msg.a.think .logo{animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{transform:scale(1.25) rotate(45deg);opacity:.6}}
+.body{font:400 15.5px/1.7 var(--sans);min-width:0;flex:1}
+.body p{margin:0 0 12px}
+.body ul{margin:0 0 12px 20px}
+.body code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--code);padding:2px 6px;border-radius:5px}
+.cb{background:var(--code);border:1px solid var(--bd);border-radius:10px;margin:12px 0;overflow:hidden;font-family:var(--sans)}
+.cb header{display:flex;justify-content:space-between;align-items:center;padding:6px 8px 6px 14px;font-size:12px;color:var(--mu);border-bottom:1px solid var(--bd)}
+.cb pre{padding:14px;overflow-x:auto;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace;color:var(--tx)}
+.cb button{padding:3px 8px;border-radius:6px;font-size:12px;color:var(--mu)}
+.cb button:hover{background:var(--hv);color:var(--tx)}
+.caret::after{content:"";display:inline-block;width:8px;height:17px;background:var(--ac);margin-left:3px;vertical-align:-3px;border-radius:2px;animation:bl .9s steps(2) infinite}
+@keyframes bl{50%{opacity:0}}
+.acts{display:flex;gap:2px;margin-top:6px;opacity:0;transition:.3s}
+.acts.show{opacity:1}
+.acts .ib{width:30px;height:30px}
+.acts .ib.on{color:var(--ac)}
+/* composer */
+.dock{position:absolute;left:0;right:0;bottom:0;padding:0 16px 14px;background:linear-gradient(transparent,var(--bg) 40%);pointer-events:none;transition:all .5s cubic-bezier(.4,0,.2,1)}
+.dock>*{pointer-events:auto}
+body:not(.chatting) .dock{bottom:calc(50% - 150px);background:none}
+.comp{max-width:720px;margin:0 auto;background:var(--surf);border:1px solid var(--bd);border-radius:14px;box-shadow:var(--sh);padding:12px 14px 10px;transition:box-shadow .25s,border-color .25s}
+.comp:focus-within{border-color:color-mix(in srgb,var(--ac) 45%,var(--bd));box-shadow:0 6px 30px rgba(13,148,136,.2)}
+textarea{width:100%;border:0;outline:0;resize:none;background:none;color:var(--tx);font:16px/1.5 var(--sans);max-height:220px;padding:4px 2px}
+textarea::placeholder{color:var(--mu)}
+.row{display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+.row .l,.row .r{display:flex;align-items:center;gap:4px;position:relative}
+.send{width:34px;height:34px;border-radius:9px;background:var(--ac);color:#fff;display:grid;place-items:center;opacity:.35;transform:scale(.94);transition:.2s}
+.send.ready{opacity:1;transform:none}
+.send.ready:hover{background:var(--ac2);transform:translateY(-1px)}
+.mdl{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;font-size:13px;color:var(--mu)}
+.mdl:hover{background:var(--hv);color:var(--tx)}
+.menu{position:absolute;bottom:calc(100% + 10px);right:0;width:270px;background:var(--surf);border:1px solid var(--bd);border-radius:14px;box-shadow:var(--sh);padding:6px;opacity:0;transform:translateY(8px) scale(.97);pointer-events:none;transition:.2s;transform-origin:bottom right;z-index:5}
+.menu.open{opacity:1;transform:none;pointer-events:auto}
+.mi{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;width:100%;text-align:left}
+.mi:hover{background:var(--hv)}
+.mi b{font-weight:500;font-size:14px;display:block;line-height:1.3}
+.mi small{color:var(--mu);font-size:12px}
+.mi .ck{color:var(--ac);opacity:0}
+.mi.on .ck{opacity:1}
+.chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:720px;margin:16px auto 0;transition:.3s}
+.chatting .chips{display:none}
+.chip{display:flex;align-items:center;gap:7px;padding:7px 14px;border:1px solid var(--bd);border-radius:10px;font-size:13.5px;color:var(--mu);animation:rise .6s both;transition:.18s}
+.chip:hover{background:var(--hv);color:var(--tx);transform:translateY(-2px)}
+.fine{text-align:center;font-size:12px;color:var(--mu);margin-top:8px}
+.chatting .fine{display:block}
+.toast{position:fixed;left:50%;bottom:90px;transform:translate(-50%,20px);background:var(--tx);color:var(--bg);padding:8px 16px;border-radius:10px;font-size:13px;opacity:0;transition:.3s;pointer-events:none;z-index:50}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+.scrim{display:none}
+@media(max-width:800px){
+.side{position:fixed;inset:0 auto 0 0;margin-left:0!important;transform:translateX(-100%);box-shadow:var(--sh)}
+.app:not(.closed) .side{transform:none}
+.app:not(.closed) .tl .open{display:grid}
+.app:not(.closed) .scrim{display:block;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:10;animation:fade .3s}
+@keyframes fade{from{opacity:0}}
+.hi{flex-direction:column;gap:8px}}
+@media(prefers-reduced-motion:reduce){*{animation-duration:.01s!important;transition-duration:.01s!important}}
+</style>
+<style>
+/* Additive only: everything above this line is the original Vertex shell. */
+.sh-r{display:flex;align-items:center;gap:6px}
+.conn{width:7px;height:7px;border-radius:50%;background:var(--mu);display:inline-block;flex:none;transition:.2s}
+.conn.online{background:var(--ac)}
+.conn.offline{background:#b91c1c}
+.conn.loading{background:var(--ac2);animation:blink 1.2s ease-in-out infinite}
+@keyframes blink{50%{opacity:.25}}
+.searchwrap{padding:0 10px 8px}
+.searchwrap input{width:100%;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--surf);color:var(--tx);font:13px var(--sans);outline:none}
+.searchwrap input:focus{border-color:color-mix(in srgb,var(--ac) 45%,var(--bd))}
+.ci .dots{cursor:pointer;padding:0 4px;border-radius:4px}
+.ci .dots:hover{background:var(--bd)}
+.ci .rename{flex:1;min-width:0;border:1px solid var(--ac);border-radius:5px;background:var(--surf);color:var(--tx);font:13px var(--sans);padding:2px 5px;outline:none}
+.sessmenu{position:fixed;bottom:auto;right:auto;width:190px;z-index:60}
+.sessmenu .mi{gap:8px;justify-content:flex-start;font-size:13.5px}
+.sessmenu .mi.danger{color:#b91c1c}
+.menu-footer{padding:8px 10px 4px;font-size:11px;color:var(--mu);border-top:1px solid var(--bd);margin-top:4px;line-height:1.4}
+.msg .err{color:#b91c1c;font-size:14px;margin-top:8px}
+.retry{display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:5px 10px;border:1px solid var(--bd);border-radius:8px;font-size:12.5px;color:var(--mu)}
+.retry:hover{background:var(--hv);color:var(--tx)}
+.jump{position:absolute;right:22px;bottom:118px;width:34px;height:34px;border-radius:50%;background:var(--surf);border:1px solid var(--bd);box-shadow:var(--sh);color:var(--mu);display:grid;place-items:center;z-index:8;transition:.2s}
+.jump:hover{color:var(--tx);transform:translateY(-2px)}
+.jump[hidden]{display:none}
+.stop-sq{width:12px;height:12px;border-radius:3px;background:currentColor;display:block}
+.ci .spin{opacity:.7;font-size:11px;letter-spacing:0}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="lg" viewBox="0 0 32 32"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"><path d="M16 3l11.3 6.5v13L16 29 4.7 22.5v-13z"/><path d="M16 10l6 3.5v7L16 24l-6-3.5v-7z" fill="currentColor" fill-opacity=".22"/><path d="M16 16v8M16 16l6-3.5M16 16l-6-3.5"/></g></symbol>
+<symbol id="pn" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></g></symbol>
+</defs></svg>
+<div class="app" id="app">
+<aside class="side">
+ <div class="sh"><span class="brand">Vertex</span><div class="sh-r"><span class="conn loading" id="conn" title="Connecting…"></span><button class="ib" id="close" aria-label="Close sidebar"><svg width="20" height="20"><use href="#pn"/></svg></button></div></div>
+ <nav class="nav">
+  <button class="ni new" id="new"><span class="pl"><svg width="14" height="14" viewBox="0 0 14 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 2v10M2 7h10"/></svg></span>New chat</button>
+  <button class="ni" id="searchbtn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search chats</button>
+  <button class="ni" id="projects"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects</button>
+  <button class="ni" id="artifacts"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8 8-5 4 5 4M16 8l5 4-5 4M14 5l-4 14"/></svg>Artifacts</button>
+ </nav>
+ <div class="lbl">Recents</div>
+ <div class="searchwrap" id="searchwrap" hidden><input id="search" type="search" placeholder="Search chats…" aria-label="Search chats"></div>
+ <div class="rec" id="rec"></div>
+ <div class="user" id="theme"><div class="av">J</div><div><b>Your account</b><small id="tlabel">Toggle theme</small></div></div>
+</aside>
+<div class="scrim" id="scrim"></div>
+<main class="main">
+ <div class="top">
+  <div class="tl"><button class="ib open" id="open" aria-label="Open sidebar"><svg width="20" height="20"><use href="#pn"/></svg></button><span class="title" id="ttl">New chat</span></div>
+  <button class="pill" id="share">Share</button>
+ </div>
+ <div class="scroll" id="scroll">
+  <section class="welcome"></section>
+  <section class="chat" id="chat"></section>
+ </div>
+ <button class="jump" id="jump" aria-label="Jump to latest" hidden><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>
+ <div class="dock"><div class="hi"><svg class="logo" width="38" height="38"><use href="#lg"/></svg><span id="greet">Good evening</span></div>
+  <div class="comp">
+   <textarea id="in" rows="1" placeholder="How can I help you today?" aria-label="Message Vertex"></textarea>
+   <div class="row">
+    <div class="l"><button class="ib" id="attach" aria-label="Attach"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="ib" id="tools" aria-label="Tools"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button></div>
+    <div class="r">
+     <button class="mdl" id="mb"><span id="mn">Vertex Core</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m3 4.5 3 3 3-3"/></svg></button>
+     <div class="menu" id="menu">
+      <button class="mi on" data-m="core"><span><b>Vertex Core</b><small>Fast and capable for everyday work</small></span><svg class="ck" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 8.5 3.5 3.5L13 5"/></svg></button>
+      <button class="mi" data-m="max"><span><b>Vertex Max</b><small>Deepest reasoning for hard problems</small></span><svg class="ck" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 8.5 3.5 3.5L13 5"/></svg></button>
+      <button class="mi" data-m="lite"><span><b>Vertex Lite</b><small>Quickest answers</small></span><svg class="ck" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 8.5 3.5 3.5L13 5"/></svg></button>
+      <div class="menu-footer">Running locally · SmolLM2-135M<br>Max changes reply length and sampling.</div>
+     </div>
+     <button class="send" id="send" aria-label="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+    </div>
+   </div>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="fine" id="fine" style="display:none">Vertex runs on a small local model. It can make mistakes — verify important information.</div>
+ </div>
+</main>
+</div>
+<div class="menu sessmenu" id="sessmenu">
+ <button class="mi" data-sm="rename"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L20 8l-4-4L4 16z"/></svg>Rename</button>
+ <button class="mi" data-sm="link"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg>Copy link</button>
+ <button class="mi danger" data-sm="delete"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>Delete</button>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

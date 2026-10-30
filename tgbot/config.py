@@ -219,6 +219,21 @@ if not _offline_path.is_absolute():
     _offline_path = Path(__file__).resolve().parent.parent / _offline_path
 OFFLINE_STORE_PATH = str(_offline_path)
 
+# --- local web chat UI (python -m web) ---
+WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1").strip() or "127.0.0.1"
+try:
+    WEB_PORT = int(os.getenv("WEB_PORT", "8765").strip() or "8765")
+except ValueError:
+    WEB_PORT = 8765
+WEB_PORT = min(65535, max(1, WEB_PORT))
+_raw_web_store = os.getenv("WEB_STORE_PATH", "data/web.db").strip() or "data/web.db"
+_web_store_path = Path(_raw_web_store)
+if not _web_store_path.is_absolute():
+    _web_store_path = Path(__file__).resolve().parent.parent / _web_store_path
+WEB_STORE_PATH = str(_web_store_path)
+# optional shared secret; empty means localhost-only, no token required
+WEB_TOKEN = os.getenv("WEB_TOKEN", "").strip()
+
 
 def validate() -> None:
     if not TELEGRAM_BOT_TOKEN:

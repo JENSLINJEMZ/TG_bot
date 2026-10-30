@@ -34,6 +34,18 @@ def test_build_messages_trims_history_to_turns():
     assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
 
 
+def test_build_messages_drops_leading_assistant():
+    history = [
+        {"role": "assistant", "content": "orphan"},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+    messages = chat.build_messages("again", history, turns=2)
+    # The window keeps the valid pair but drops the orphan assistant.
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+    assert messages[1]["content"] == "hi"
+
+
 def test_build_messages_with_zero_turns_drops_history():
     history = [{"role": "user", "content": "old"}]
     messages = chat.build_messages("new", history, turns=0)
