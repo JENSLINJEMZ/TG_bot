@@ -57,10 +57,25 @@ DIFFUSE_UNLOAD_AFTER = os.getenv("DIFFUSE_UNLOAD_AFTER", "0").strip() != "0"
 DIFFUSE_DTYPE = os.getenv("DIFFUSE_DTYPE", "fp32").strip().lower() or "fp32"
 
 CHAT_ENABLED = os.getenv("CHAT_ENABLED", "1").strip() != "0"
+# transformers = the built-in SmolLM2 (CPU, offline); ollama = a local server.
+CHAT_BACKEND = os.getenv("CHAT_BACKEND", "transformers").strip().lower() or "transformers"
+if CHAT_BACKEND not in ("transformers", "ollama"):
+    CHAT_BACKEND = "transformers"
 CHAT_MODEL = os.getenv("CHAT_MODEL", "HuggingFaceTB/SmolLM2-135M-Instruct").strip()
 CHAT_MAX_NEW_TOKENS = max(16, int(os.getenv("CHAT_MAX_NEW_TOKENS", "160") or "160"))
 CHAT_HISTORY_TURNS = max(0, int(os.getenv("CHAT_HISTORY_TURNS", "4") or "4"))
 CHAT_THREADS = max(1, int(os.getenv("CHAT_THREADS", "2") or "2"))
+
+# --- local Ollama chat backend (CHAT_BACKEND=ollama) ---
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434").strip().rstrip("/")
+OLLAMA_URL = OLLAMA_URL or "http://127.0.0.1:11434"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b").strip() or "qwen3:8b"
+# 4096 keeps the KV cache small enough for an 8 GB laptop GPU.
+OLLAMA_NUM_CTX = max(512, int(os.getenv("OLLAMA_NUM_CTX", "4096") or "4096"))
+# 1 = Qwen3 thinks before answering (slower); 0 = direct answers.
+OLLAMA_THINK = os.getenv("OLLAMA_THINK", "0").strip() == "1"
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "5m").strip() or "5m"
+OLLAMA_TIMEOUT = max(5, int(os.getenv("OLLAMA_TIMEOUT", "300") or "300"))
 
 # GPU outfit editor: Qwen-Image-Edit-2509 (4-bit Nunchaku). Needs CUDA + nunchaku;
 # falls back to the diffuse/tint engines when unavailable.

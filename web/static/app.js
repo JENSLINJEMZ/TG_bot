@@ -120,6 +120,11 @@ async function checkHealth() {
   try {
     const h = await api('/api/health');
     setConn(h.enabled ? 'online' : 'offline');
+    if (h.model) {
+      const tag = $('#modeltag');
+      if (tag) tag.textContent = h.model;
+      if (h.enabled) connEl.title = h.model + ' ready';
+    }
     return h;
   } catch {
     setConn('offline');

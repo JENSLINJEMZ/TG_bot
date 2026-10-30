@@ -80,7 +80,7 @@ HELP_TEXT = (
     "✨ restyle an outfit from a text prompt\n"
     "🎬 animate a photo into a short video (pick 5, 10 or 15 seconds)\n"
     "🖇 turn TWO photos into one video (both people act out your prompt)\n"
-    "💬 chat with a small local model\n\n"
+    "💬 chat with the local model\n\n"
     "Use /menu to pick an operation. A photo with a color caption (\"navy\", "
     "\"#ff8800\", \"gradient red blue\", \"transparent\") still works directly.\n"
     "Heavy jobs run in a queue: you get a \"queued\" notice, then the result "
@@ -575,7 +575,7 @@ async def cb_mode_chat(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(chat_history=[])
     await callback.message.edit_text(
         "💬 Chat mode - send me a message. /cancel to stop.\n"
-        "(Small local model, so replies are short and may take a moment.)"
+        "(Local model — replies may take a moment.)"
     )
     await callback.answer()
 

@@ -177,6 +177,11 @@ def generate(prompt: str | None, data: bytes, seconds: float | None = None) -> t
     ``seconds`` selects the clip length (rounded up to the engine's frame
     stride); when omitted the configured ``VIDEO_FRAMES`` is used.
     """
+    # Free the chat model (including a resident Ollama model) before a video job.
+    from . import chat
+
+    chat.unload()
+
     # The 14B engine runs inside a separate ComfyUI server; it must not be
     # blocked by this process's CUDA check (and needs no local torch).
     if config.VIDEO_ENGINE == "wan14b":

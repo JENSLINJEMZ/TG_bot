@@ -4,13 +4,13 @@
 
 **A 100% local Telegram bot for AI photo editing and image-to-video animation.**
 
-Background removal · AI outfit / scene editing · image-to-video · a small chat model — all running on your own machine, no cloud APIs.
+Background removal · AI outfit / scene editing · image-to-video · a local chat model — all running on your own machine, no cloud APIs.
 
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 [![aiogram](https://img.shields.io/badge/aiogram-3.x-2CA5E0.svg)](https://docs.aiogram.dev/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.11%20%2B%20CUDA-EE4C2C.svg)](https://pytorch.org/)
 [![Runs locally](https://img.shields.io/badge/inference-local-success.svg)](#how-it-works)
-[![Tests](https://img.shields.io/badge/tests-97%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-106%20passing-brightgreen.svg)](#testing)
 
 </div>
 
@@ -24,7 +24,7 @@ Send a photo (or two), get back an edited image or a short MP4. The bot is a thi
 - **Background remover** — [rembg](https://github.com/danielgatis/rembg) / U2Net cutout, composited onto a solid colour, a gradient, or transparency.
 - **AI editor** — [Qwen-Image-Edit-2509](https://huggingface.co/Qwen/Qwen-Image-Edit-2509) (4-bit [Nunchaku](https://github.com/nunchaku-tech/nunchaku) SVDQuant) for outfit changes, scene composition and prompt-driven restyle.
 - **Image-to-video** — Wan 2.2 I2V (**14B** via ComfyUI, or 5B in-process) and LTX-Video.
-- **Chat** — a tiny local LLM (SmolLM2-135M-Instruct).
+- **Chat** — SmolLM2-135M-Instruct by default, or **Qwen3-8B** through a local [Ollama](https://ollama.com/) server for much better answers.
 
 Everything is stored in a local SQLite database. Nothing is sent to a third-party service.
 
@@ -44,7 +44,7 @@ Everything is stored in a local SQLite database. Nothing is sent to a third-part
 | **Restyle outfit** | 1 photo + prompt | Qwen redraws from free text (e.g. `navy suit`) |
 | **Animate photo** | 1 photo + motion prompt + length | image → short MP4 |
 | **2-photo video** | 2 photos + action prompt + length | combine into one frame, then animate it |
-| **Chat** | text | small local LLM reply |
+| **Chat** | text | local LLM reply (SmolLM2 or Qwen3-8B) |
 
 Plus: a job queue, per-user rate limiting, a live progress bar in chat, an allow-list,
 owner-only admin commands and a local archive CLI.
@@ -62,7 +62,7 @@ Telegram  ──►  tgbot/bot.py (aiogram, long polling)
         ┌────────────┼───────────────┬─────────────────┬───────────────┐
         ▼            ▼               ▼                 ▼               ▼
    bgchange.py   edit_model.py   video.py ──► comfy.py         chat.py / diffuse.py
-   rembg U2Net   Qwen-Image-Edit  engine dispatch  ComfyUI HTTP   SmolLM2 / tiny-SD
+   rembg U2Net   Qwen-Image-Edit  engine dispatch  ComfyUI HTTP   SmolLM2 or Ollama / tiny-SD
         │            │               │                 │               │
         └────────────┴───────────────┴─────────────────┴───────────────┘
                      │
@@ -80,7 +80,8 @@ Telegram  ──►  tgbot/bot.py (aiogram, long polling)
 4. The result is archived through `Storage` into SQLite and sent back.
 
 The heavy **editor auto-unloads the chat / diffusion models** first (and vice
-versa) so only one large model is ever resident.
+versa) so only one large model is ever resident. With the Ollama backend it also
+asks Ollama to evict Qwen3 before an image or video job.
 
 ---
 
@@ -94,7 +95,8 @@ versa) so only one large model is ever resident.
 | RAM | ~2 GB | ~16 GB | ~16 GB | server-side |
 
 Without a usable GPU the bot still runs: background, chat and a lightweight tint
-fallback for restyle/combine all work on CPU.
+fallback for restyle/combine all work on CPU. The built-in SmolLM2 chat model is
+CPU-only; the optional Qwen3-8B backend uses the GPU (see below).
 
 ---
 
@@ -184,11 +186,36 @@ commented list). The most useful ones:
 
 ### Chat & CPU fallback
 
+The default chat model is tiny and runs on CPU. For much better answers, run
+**Qwen3-8B** through a local Ollama server:
+
+```bash
+ollama pull qwen3:8b
+```
+
+Then set these in `.env`:
+
+```ini
+CHAT_BACKEND=ollama
+OLLAMA_MODEL=qwen3:8b
+OLLAMA_NUM_CTX=4096
+```
+
+Qwen3-8B Q4_K_M is ~5.2 GB. It fits an 8 GB GPU with a 4K context — close other
+GPU apps first. The bot asks Ollama to evict it before the image/video models run.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `CHAT_ENABLED` | `1` | show the Chat button |
-| `CHAT_MODEL` | `HuggingFaceTB/SmolLM2-135M-Instruct` | any causal-LM chat model |
+| `CHAT_BACKEND` | `transformers` | `transformers` (built-in SmolLM2) or `ollama` |
+| `CHAT_MODEL` | `HuggingFaceTB/SmolLM2-135M-Instruct` | transformers model id |
 | `CHAT_MAX_NEW_TOKENS` | `160` | reply length cap |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | local Ollama server |
+| `OLLAMA_MODEL` | `qwen3:8b` | Ollama model tag |
+| `OLLAMA_NUM_CTX` | `4096` | context window (lower it if VRAM is tight) |
+| `OLLAMA_THINK` | `0` | `1` lets Qwen3 think first (slower) |
+| `OLLAMA_KEEP_ALIVE` | `5m` | how long Ollama keeps the model in VRAM |
+| `OLLAMA_TIMEOUT` | `300` | request timeout in seconds |
 | `DIFFUSE_ENABLED` | `1` | CPU `tiny-sd` fallback for Restyle (set `0` when the GPU editor works) |
 | `DIFFUSE_MODEL` | `segmind/tiny-sd` | fallback restyle model |
 
@@ -280,7 +307,7 @@ uv run python -m web --no-browser    # do not open a tab
 - Replies stream token-by-token over SSE; the **Stop** button cancels at the
   next token and keeps the partial answer.
 - **Vertex Core / Max / Lite** map to real sampling presets (reply length,
-  temperature, top-p) on the single SmolLM2-135M model.
+  temperature, top-p) on the selected backend model.
 - Deep links work: `http://127.0.0.1:8765/?s=<session-id>`. **Share** copies one.
 - Search filters the recents list; `Ctrl/Cmd+Shift+O` starts a new chat.
 - The UI is the original Vertex shell, with the two fonts vendored under
@@ -288,8 +315,9 @@ uv run python -m web --no-browser    # do not open a tab
 - Localhost only by default. Set `WEB_TOKEN` to also require
   `X-Web-Token`/`?token=`, and `WEB_HOST`/`WEB_PORT` to change the bind.
 
-> The web process loads its own copy of the chat model. Run it alongside the
-> Telegram bot only if you have the RAM (roughly 1 GB extra while chatting).
+> With the default transformers backend the web process loads its own copy of
+> SmolLM2 (roughly 1 GB extra RAM). With `CHAT_BACKEND=ollama` the bot and the
+> web UI share one Qwen3 model in the Ollama server, so only one copy uses VRAM.
 
 ---
 
@@ -414,7 +442,7 @@ tgbot/
   video.py        image-to-video engine dispatch (wan14b / wan / ltx)
   comfy.py        ComfyUI HTTP + WebSocket client and the Wan 14B graph
   diffuse.py      CPU tiny-SD img2img fallback for Restyle
-  chat.py         small local chat model (SmolLM2-135M-Instruct)
+  chat.py         local chat model + Ollama adapter
   progress.py     thread-safe progress snapshot for the live bar
   ratelimit.py    per-user cooldown
   sticker.py      "Processing…" sticker
@@ -438,7 +466,7 @@ tests/            pytest suite
 ## Testing
 
 ```bash
-uv run pytest tests/ -q      # 97 tests
+uv run pytest tests/ -q      # 106 tests
 ```
 
 The suite covers colour parsing, the outfit guard, scheduling/queueing, storage,

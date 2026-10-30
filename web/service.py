@@ -1,10 +1,10 @@
 """Chat orchestration for the web UI.
 
-The Telegram bot and this UI each own a model instance in their own process, so
-this lock only serializes requests inside the web process. The blocking token
-generator is drained in a worker thread and forwarded to the aiohttp response
-as SSE events, which keeps the event loop free for health checks and the 409
-busy path.
+The Telegram bot and this UI each talk to the same chat backend (a local
+transformers model or a shared Ollama server), so this lock only serializes
+requests inside the web process. The blocking token generator is drained in a
+worker thread and forwarded to the aiohttp response as SSE events, which keeps
+the event loop free for health checks and the 409 busy path.
 """
 
 from __future__ import annotations
@@ -23,19 +23,19 @@ from .store import WebStore
 PRESETS: dict[str, dict[str, object]] = {
     "core": {
         "label": "Vertex Core",
-        "max_new_tokens": 192,
+        "max_new_tokens": 384,
         "temperature": 0.7,
         "top_p": 0.9,
     },
     "max": {
         "label": "Vertex Max",
-        "max_new_tokens": 384,
+        "max_new_tokens": 768,
         "temperature": 0.8,
         "top_p": 0.95,
     },
     "lite": {
         "label": "Vertex Lite",
-        "max_new_tokens": 96,
+        "max_new_tokens": 192,
         "temperature": 0.5,
         "top_p": 0.9,
     },
@@ -92,7 +92,7 @@ class ChatService:
             "ok": True,
             "enabled": bool(config.CHAT_ENABLED),
             "busy": self.busy,
-            "model": config.CHAT_MODEL,
+            "model": chat_engine.active_model(),
             "presets": [
                 {"id": key, "label": value["label"]} for key, value in PRESETS.items()
             ],

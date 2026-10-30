@@ -43,8 +43,16 @@ class WebAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         data = await response.json()
         self.assertTrue(data["ok"])
-        self.assertEqual(data["model"], web_service.config.CHAT_MODEL)
+        self.assertEqual(data["model"], web_service.chat_engine.active_model())
         self.assertIn("presets", data)
+
+    async def test_health_reports_the_active_backend_model(self):
+        with patch.object(
+            web_service.chat_engine, "active_model", return_value="qwen3:8b"
+        ):
+            response = await self.client.get("/api/health")
+            data = await response.json()
+        self.assertEqual(data["model"], "qwen3:8b")
 
     async def test_index_and_static(self):
         response = await self.client.get("/")

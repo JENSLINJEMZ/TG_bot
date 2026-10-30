@@ -17,6 +17,7 @@ def test_shell_keeps_vertex_tokens_and_layout():
     assert 'id="in"' in html
     assert 'id="send"' in html
     assert "Space Grotesk" in html
+    assert 'id="modeltag"' in html
 
 
 def test_fonts_are_vendored_not_remote():
@@ -54,3 +55,4 @@ def test_app_js_keeps_shell_behaviour():
     assert "regenerate" in js
     assert "$('#chips')" in js
     assert "chip.dataset.p" in js
+    assert "$('#modeltag')" in js
