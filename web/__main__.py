@@ -17,7 +17,7 @@ from .app import create_app
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="python -m web",
-        description="Local Vertex web chat UI (aiohttp + SmolLM2).",
+        description="Local Vertex web chat UI (aiohttp + local chat backend).",
     )
     parser.add_argument("--host", default=config.WEB_HOST, help="bind address")
     parser.add_argument("--port", type=int, default=config.WEB_PORT, help="bind port")
@@ -35,9 +35,13 @@ def main(argv: list[str] | None = None) -> None:
     url = f"http://{display_host}:{args.port}/"
     print(f"Vertex web chat  ->  {url}")
     print(f"sessions         ->  {config.WEB_STORE_PATH}")
+    print(f"uploads          ->  {config.WEB_UPLOAD_DIR}")
     if config.WEB_TOKEN:
         print("token required   ->  append ?token=... or send X-Web-Token")
-    print("The web app loads its own copy of the chat model; run it alongside the bot only if you have the RAM.")
+    if config.CHAT_BACKEND == "ollama":
+        print("chat backend     ->  Ollama (shared with the bot)")
+    else:
+        print("chat backend     ->  transformers (loads its own model copy)")
 
     if not args.no_browser:
         from urllib.parse import quote

@@ -16,6 +16,10 @@ const ttl = $('#ttl');
 const fine = $('#fine');
 const toastEl = $('#toast');
 const connEl = $('#conn');
+const comp = $('#comp');
+const fileInput = $('#file');
+const attachmentsEl = $('#attachments');
+const toolsMenu = $('#toolsmenu');
 
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -38,6 +42,10 @@ const state = {
   raf: 0,
   filter: '',
   menuId: null,
+  attachments: [],
+  tool: '',
+  uploading: 0,
+  maxAttachments: 4,
 };
 if (!['core', 'max', 'lite'].includes(state.preset)) state.preset = 'core';
 
@@ -90,6 +98,169 @@ function toast(m) {
   toastTimer = setTimeout(() => toastEl.classList.remove('on'), 1800);
 }
 
+/* -- attachments and local tools --------------------------------------- */
+const TOOL_LABELS = {
+  describe: 'Describe image',
+  summarize: 'Summarize file',
+  removebg: 'Remove background',
+  time: 'Time & date',
+  calc: 'Calculator',
+};
+
+function attachmentUrl(a) {
+  const raw = a && a.url ? a.url : `/api/uploads/${encodeURIComponent(a && a.id || '')}/content`;
+  if (!TOKEN) return raw;
+  return raw + (raw.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
+}
+
+function attSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function attsHtml(atts) {
+  return (atts || []).map(a => {
+    const url = attachmentUrl(a);
+    const name = escAttr(a.name || 'attachment');
+    if (a.kind === 'image') {
+      return `<a class="attimg" href="${escAttr(url)}" target="_blank" rel="noopener"><img src="${escAttr(url)}" alt="${name}" loading="lazy"></a>`;
+    }
+    return `<a class="filelink" href="${escAttr(url)}" target="_blank" rel="noopener"><span>▤</span><span>${esc(a.name || 'file')}</span><small>${attSize(a.size)}</small></a>`;
+  }).join('');
+}
+
+function renderAttachments() {
+  if (!attachmentsEl) return;
+  const has = state.attachments.length > 0 || !!state.tool;
+  attachmentsEl.hidden = !has;
+  if (!has) { attachmentsEl.innerHTML = ''; return; }
+  const parts = [];
+  if (state.tool) {
+    parts.push(`<div class="atchip toolchip"><span class="fico">✦</span><span class="aname">${esc(TOOL_LABELS[state.tool] || state.tool)}</span><button data-toolclear aria-label="Turn tool off">×</button></div>`);
+  }
+  for (const a of state.attachments) {
+    const thumb = a.kind === 'image'
+      ? `<img src="${escAttr(attachmentUrl(a))}" alt="">`
+      : `<span class="fico">▤</span>`;
+    parts.push(`<div class="atchip">${thumb}<span class="aname">${esc(a.name || 'attachment')}</span><button data-remove="${escAttr(a.id)}" aria-label="Remove attachment">×</button></div>`);
+  }
+  attachmentsEl.innerHTML = parts.join('');
+}
+
+function hasImageAttachment() {
+  return state.attachments.some(a => a.kind === 'image');
+}
+
+function hasTextAttachment() {
+  return state.attachments.some(a => a.kind === 'text');
+}
+
+function canSend() {
+  if (state.busy || state.uploading) return false;
+  const text = inp.value.trim();
+  if (state.tool === 'time') return true;
+  if (state.tool === 'calc') return !!text;
+  if (state.tool === 'describe' || state.tool === 'removebg') return hasImageAttachment();
+  if (state.tool === 'summarize') return hasTextAttachment();
+  return !!text || state.attachments.length > 0;
+}
+
+function setTool(tool) {
+  state.tool = TOOL_LABELS[tool] ? tool : '';
+  $$('.toolsmenu .mi[data-tool]').forEach(b => b.classList.toggle('on', (b.dataset.tool || '') === state.tool));
+  inp.placeholder = state.tool === 'describe' ? 'Describe an attached image…'
+    : state.tool === 'summarize' ? 'Ask about an attached file…'
+    : state.tool === 'removebg' ? "Background colour or 'transparent' (optional)…"
+    : state.tool === 'time' ? 'Press send for the current local time…'
+    : state.tool === 'calc' ? 'Enter an expression, e.g. 12 * (4 + 3)…'
+    : 'How can I help you today?';
+  renderAttachments();
+  grow();
+}
+
+async function prepareImage(file) {
+  if (!file || !file.type.startsWith('image/') || typeof createImageBitmap !== 'function') {
+    return file;
+  }
+  let bitmap;
+  try { bitmap = await createImageBitmap(file); } catch { return file; }
+  const max = 1600;
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  if (scale >= 1) { bitmap.close?.(); return file; }
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) { bitmap.close?.(); return file; }
+  const png = file.type === 'image/png' || /\.png$/i.test(file.name || '');
+  if (!png) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  if (typeof canvas.toBlob !== 'function') return file;
+  const type = png ? 'image/png' : 'image/jpeg';
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, type, 0.86));
+  if (!blob) return file;
+  const name = (file.name || 'image').replace(/\.[^.]+$/, '') + (png ? '.png' : '.jpg');
+  try { return new File([blob], name, { type, lastModified: Date.now() }); }
+  catch { return file; }
+}
+
+async function addFiles(files) {
+  const list = [...(files || [])];
+  if (!list.length) return;
+  const room = state.maxAttachments - state.attachments.length;
+  if (room <= 0) { toast(`You can attach up to ${state.maxAttachments} files`); return; }
+  if (list.length > room) toast(`Only ${room} more attachment${room === 1 ? '' : 's'} can be added`);
+  for (const file of list.slice(0, room)) {
+    state.uploading++;
+    try {
+      const form = new FormData();
+      const prepared = await prepareImage(file);
+      form.append('file', prepared, prepared.name || file.name);
+      const res = await fetch('/api/uploads', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: form,
+      });
+      if (!res.ok) {
+        let msg = res.statusText || `HTTP ${res.status}`;
+        try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      state.attachments.push(data.upload);
+      renderAttachments();
+      grow();
+    } catch (e) {
+      toast(e.message || 'Could not upload that file');
+    } finally {
+      state.uploading--;
+    }
+  }
+  if (state.uploading === 0) { inp.focus(); grow(); }
+}
+
+async function removeAttachment(id) {
+  const index = state.attachments.findIndex(a => a.id === id);
+  if (index < 0) return;
+  const [attachment] = state.attachments.splice(index, 1);
+  renderAttachments();
+  grow();
+  try { await api(`/api/uploads/${encodeURIComponent(attachment.id)}`, { method: 'DELETE' }); } catch {}
+}
+
+function clearComposerAttachments() {
+  state.attachments = [];
+  state.tool = '';
+  renderAttachments();
+  setTool('');
+}
+
 function setTheme(t) {
   document.documentElement.dataset.theme = t;
   store.set('theme', t);
@@ -120,6 +291,9 @@ async function checkHealth() {
   try {
     const h = await api('/api/health');
     setConn(h.enabled ? 'online' : 'offline');
+    if (Number.isFinite(h.max_attachments) && h.max_attachments > 0) {
+      state.maxAttachments = h.max_attachments;
+    }
     if (h.model) {
       const tag = $('#modeltag');
       if (tag) tag.textContent = h.model;
@@ -184,6 +358,7 @@ function reset(push = true) {
   state.activeId = null;
   state.messages = [];
   chat.innerHTML = '';
+  clearComposerAttachments();
   setChatting(false);
   ttl.textContent = 'New chat';
   if (push) history.pushState({}, '', baseUrl());
@@ -199,9 +374,10 @@ async function loadSession(id, push = true) {
     const { session } = await api(`/api/sessions/${encodeURIComponent(id)}`);
     state.activeId = session.id;
     state.messages = session.messages || [];
+    clearComposerAttachments();
     ttl.textContent = session.title;
     chat.innerHTML = '';
-    state.messages.forEach(m => addMessage(m.role, m.content, { messageId: m.id, animate: false }));
+    state.messages.forEach(m => addMessage(m.role, m.content, { messageId: m.id, animate: false, attachments: m.attachments || [] }));
     setChatting(state.messages.length > 0);
     if (push) history.pushState({}, '', chatUrl(session.id));
     renderRec();
@@ -228,17 +404,21 @@ function actsHtml() {
 }
 
 function addMessage(role, content, opts = {}) {
+  const attachments = opts.attachments || [];
   if (role === 'user') {
     const d = document.createElement('div');
     d.className = 'msg u';
-    d.innerHTML = `<div class="b">${esc(content)}</div>`;
+    const atts = attachments.length ? `<div class="atts">${attsHtml(attachments)}</div>` : '';
+    const body = content ? `<div class="b">${esc(content)}</div>` : '';
+    d.innerHTML = atts + body;
     chat.appendChild(d);
     if (opts.animate !== false) sc.scrollTop = sc.scrollHeight;
     return d;
   }
   const d = document.createElement('div');
   d.className = 'msg a';
-  d.innerHTML = `${LG}<div style="flex:1"><div class="body">${md(content)}</div><div class="acts"></div></div>`;
+  const atts = attachments.length ? `<div class="atts">${attsHtml(attachments)}</div>` : '';
+  d.innerHTML = `${LG}<div style="flex:1"><div class="body">${md(content)}</div>${atts}<div class="acts"></div></div>`;
   d._raw = content;
   d._id = opts.messageId || null;
   const acts = d.querySelector('.acts');
@@ -275,13 +455,25 @@ function scheduleStreamRender() {
   });
 }
 
-function finalizeStream(el, raw, messageId) {
+function finalizeStream(el, raw, messageId, attachments = []) {
   if (!el) return;
   el.classList.remove('think');
   const body = el.querySelector('.body');
   body.innerHTML = md(raw || '');
   el._raw = raw || '';
   if (messageId) el._id = messageId;
+  const wrap = body.parentElement;
+  let atts = wrap.querySelector('.atts');
+  if (attachments && attachments.length) {
+    if (!atts) {
+      atts = document.createElement('div');
+      atts.className = 'atts';
+      body.insertAdjacentElement('afterend', atts);
+    }
+    atts.innerHTML = attsHtml(attachments);
+  } else if (atts) {
+    atts.remove();
+  }
   const acts = el.querySelector('.acts');
   acts.innerHTML = actsHtml();
   requestAnimationFrame(() => acts.classList.add('show'));
@@ -312,7 +504,7 @@ function setSendMode(streaming) {
   } else {
     send.innerHTML = SEND_ICON;
     send.classList.remove('stop');
-    send.classList.toggle('ready', !!inp.value.trim());
+    send.classList.toggle('ready', canSend());
     send.setAttribute('aria-label', 'Send');
     send.title = '';
   }
@@ -379,7 +571,7 @@ async function runStream(sessionId, payload, el) {
         state.streamRaw += data.text || '';
         scheduleStreamRender();
       } else if (event === 'done') {
-        finalizeStream(el, data.content || state.streamRaw, data.message_id);
+        finalizeStream(el, data.content || state.streamRaw, data.message_id, data.attachments || []);
         if (data.title) {
           ttl.textContent = data.title;
           const s = state.sessions.find(x => x.id === sessionId);
@@ -430,7 +622,7 @@ $('#chips').addEventListener('click', e => {
 function grow() {
   inp.style.height = 'auto';
   inp.style.height = Math.min(inp.scrollHeight, 220) + 'px';
-  if (!state.busy) send.classList.toggle('ready', !!inp.value.trim());
+  if (!state.busy) send.classList.toggle('ready', canSend());
 }
 inp.oninput = grow;
 inp.onkeydown = e => {
@@ -445,9 +637,45 @@ function stop() {
   if (state.controller) state.controller.abort();
 }
 
+function displayForSend(text) {
+  if (state.tool === 'removebg') {
+    if (!text) return 'Remove background';
+    return /^remove background/i.test(text) ? text : `Remove background: ${text}`;
+  }
+  if (text) return text;
+  if (state.tool === 'time') return 'What time is it?';
+  if (state.tool === 'describe') return 'Describe the attached image';
+  if (state.tool === 'summarize') return 'Summarize the attached file';
+  if (hasImageAttachment() && hasTextAttachment()) return 'Analyze the attached files';
+  if (hasImageAttachment()) return 'Describe the attached image';
+  if (hasTextAttachment()) return 'Summarize the attached file';
+  return 'New chat';
+}
+
 async function go() {
   const v = inp.value.trim();
-  if (!v || state.busy) return;
+  if (state.busy) return;
+  if (state.uploading) { toast('Wait for the upload to finish'); return; }
+  if (state.tool === 'calc' && !v) { toast('Enter an expression to calculate'); return; }
+  if ((state.tool === 'describe' || state.tool === 'removebg') && !hasImageAttachment()) {
+    toast('Attach an image first'); return;
+  }
+  if (state.tool === 'summarize' && !hasTextAttachment()) {
+    toast('Attach a text file first'); return;
+  }
+  if (!v && !state.attachments.length && state.tool !== 'time') {
+    toast('Type a message or attach a file'); return;
+  }
+
+  const display = displayForSend(v);
+  const outgoing = {
+    content: v,
+    preset: state.preset,
+    attachments: state.attachments.map(a => a.id),
+    tool: state.tool || undefined,
+  };
+  const localAtts = state.attachments.slice();
+
   // Hold the busy flag across session creation too, so a double click cannot
   // start two streams before runStream() gets a chance to set it.
   state.busy = true;
@@ -459,7 +687,7 @@ async function go() {
     try {
       const { session } = await api('/api/sessions', {
         method: 'POST',
-        body: JSON.stringify({ title: titleFor(v), preset: state.preset }),
+        body: JSON.stringify({ title: titleFor(display), preset: state.preset }),
       });
       sessionId = session.id;
       state.activeId = session.id;
@@ -477,13 +705,14 @@ async function go() {
   }
 
   setChatting(true);
-  if (created) ttl.textContent = titleFor(v);
+  if (created) ttl.textContent = titleFor(display);
   inp.value = '';
+  addMessage('user', display, { attachments: localAtts });
+  clearComposerAttachments();
   grow();
-  addMessage('user', v);
   const el = addAssistantStream();
   const clientId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-  await runStream(sessionId, { content: v, preset: state.preset, client_id: clientId }, el);
+  await runStream(sessionId, { ...outgoing, client_id: clientId }, el);
 }
 
 async function regenerate() {
@@ -531,7 +760,11 @@ function setPreset(p) {
   if (label) $('#mn').textContent = label.textContent;
 }
 
-$('#mb').onclick = e => { e.stopPropagation(); $('#menu').classList.toggle('open'); };
+$('#mb').onclick = e => {
+  e.stopPropagation();
+  toolsMenu.classList.remove('open');
+  $('#menu').classList.toggle('open');
+};
 $$('.mi[data-m]').forEach(b => b.onclick = e => {
   e.stopPropagation();
   setPreset(b.dataset.m);
@@ -555,8 +788,47 @@ $('#searchbtn').onclick = () => {
 };
 $('#search').oninput = e => { state.filter = e.target.value.trim(); renderRec(); };
 
-$('#attach').onclick = () => toast('Text-only build — attachments are not available');
-$('#tools').onclick = () => toast('Text-only build — tools are not available');
+$('#attach').onclick = () => fileInput.click();
+fileInput.onchange = () => {
+  addFiles(fileInput.files);
+  fileInput.value = '';
+};
+$('#tools').onclick = e => {
+  e.stopPropagation();
+  $('#menu').classList.remove('open');
+  toolsMenu.classList.toggle('open');
+};
+$$('.toolsmenu .mi[data-tool]').forEach(button => {
+  button.onclick = e => {
+    e.stopPropagation();
+    setTool(button.dataset.tool || '');
+    toolsMenu.classList.remove('open');
+    inp.focus();
+  };
+});
+attachmentsEl.addEventListener('click', e => {
+  const remove = e.target.closest('[data-remove]');
+  if (remove) { removeAttachment(remove.dataset.remove); return; }
+  if (e.target.closest('[data-toolclear]')) setTool('');
+});
+comp.addEventListener('dragover', e => {
+  if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) {
+    e.preventDefault();
+    comp.style.borderColor = 'var(--ac)';
+  }
+});
+comp.addEventListener('dragleave', () => { comp.style.borderColor = ''; });
+comp.addEventListener('drop', e => {
+  if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  comp.style.borderColor = '';
+  addFiles(e.dataTransfer.files);
+});
+inp.addEventListener('paste', e => {
+  if (!e.clipboardData || !e.clipboardData.files || !e.clipboardData.files.length) return;
+  e.preventDefault();
+  addFiles(e.clipboardData.files);
+});
 $('#projects').onclick = () => toast('Projects are not available in this build');
 $('#artifacts').onclick = () => toast('Artifacts are not available in this build');
 
@@ -685,6 +957,7 @@ chat.addEventListener('click', e => {
 /* -- misc -------------------------------------------------------------- */
 document.addEventListener('click', e => {
   if (!e.target.closest('.r')) $('#menu').classList.remove('open');
+  if (!e.target.closest('.l')) toolsMenu.classList.remove('open');
   if (!e.target.closest('#sessmenu') && !e.target.closest('.dots')) closeSessionMenu();
 });
 
@@ -699,6 +972,7 @@ addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); reset(); }
   if (e.key === 'Escape') {
     $('#menu').classList.remove('open');
+    toolsMenu.classList.remove('open');
     closeSessionMenu();
     if (state.busy) stop();
   }

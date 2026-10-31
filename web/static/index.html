@@ -153,6 +153,31 @@ textarea::placeholder{color:var(--mu)}
 .jump[hidden]{display:none}
 .stop-sq{width:12px;height:12px;border-radius:3px;background:currentColor;display:block}
 .ci .spin{opacity:.7;font-size:11px;letter-spacing:0}
+/* attachments and local tools */
+.attachbar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.attachbar[hidden]{display:none}
+.atchip{display:flex;align-items:center;gap:7px;max-width:100%;padding:5px 7px 5px 5px;border:1px solid var(--bd);border-radius:9px;background:var(--hv);font-size:12px;color:var(--mu)}
+.atchip img{width:32px;height:32px;object-fit:cover;border-radius:6px;flex:none}
+.atchip .fico{width:32px;height:32px;border-radius:6px;background:var(--surf);display:grid;place-items:center;flex:none;font-size:11px;color:var(--ac)}
+.atchip .aname{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--tx)}
+.atchip button{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:var(--mu);flex:none}
+.atchip button:hover{background:var(--bd);color:var(--tx)}
+.toolchip{border-color:color-mix(in srgb,var(--ac) 45%,var(--bd));background:color-mix(in srgb,var(--ac) 10%,var(--surf));color:var(--ac)}
+.toolchip .fico{background:transparent;color:var(--ac)}
+.toolsmenu{left:0;right:auto;transform-origin:bottom left;width:300px}
+.toolhead{padding:7px 10px 5px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mu)}
+.toolsmenu .mi{gap:10px;align-items:flex-start}
+.toolsmenu .mi.on{background:var(--hv)}
+.toolsmenu .mi .tico{width:28px;height:28px;border-radius:8px;background:var(--hv);display:grid;place-items:center;flex:none;color:var(--ac)}
+.toolsmenu .mi span{flex:1;min-width:0}
+.msg.u .atts{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-bottom:6px}
+.msg.u .atts img{max-width:250px;max-height:250px;border-radius:11px;display:block;border:1px solid var(--bd)}
+.msg.u .atts .filelink{display:flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid var(--bd);border-radius:9px;background:var(--surf);font-size:12.5px;color:var(--mu)}
+.msg.u .atts .filelink:hover{color:var(--tx)}
+.msg.a .atts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.msg.a .atts img{max-width:min(420px,100%);border-radius:11px;display:block;border:1px solid var(--bd)}
+.msg.a .atts .filelink{display:flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid var(--bd);border-radius:9px;font-size:12.5px;color:var(--mu)}
+.msg.a .atts .filelink:hover{color:var(--tx)}
 </style>
 </head>
 <body>
@@ -186,10 +211,23 @@ textarea::placeholder{color:var(--mu)}
  </div>
  <button class="jump" id="jump" aria-label="Jump to latest" hidden><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>
  <div class="dock"><div class="hi"><svg class="logo" width="38" height="38"><use href="#lg"/></svg><span id="greet">Good evening</span></div>
-  <div class="comp">
+  <div class="comp" id="comp">
+   <div class="attachbar" id="attachments" hidden></div>
    <textarea id="in" rows="1" placeholder="How can I help you today?" aria-label="Message Vertex"></textarea>
+   <input id="file" type="file" multiple hidden accept="image/png,image/jpeg,image/webp,.txt,.md,.markdown,.csv,.tsv,.json,.log,.py,.js,.mjs,.ts,.tsx,.jsx,.html,.htm,.css,.yaml,.yml,.ini,.toml,.sql,.sh,.bat,.ps1,.xml,.rst">
    <div class="row">
-    <div class="l"><button class="ib" id="attach" aria-label="Attach"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="ib" id="tools" aria-label="Tools"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button></div>
+    <div class="l"><button class="ib" id="attach" aria-label="Attach file" title="Attach image or text file"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="ib" id="tools" aria-label="Tools" title="Local tools"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
+     <div class="menu toolsmenu" id="toolsmenu">
+      <div class="toolhead">Local tools</div>
+      <button class="mi" data-tool="describe"><span class="tico">◉</span><span><b>Describe image</b><small>Ask the vision model about an attached image</small></span></button>
+      <button class="mi" data-tool="summarize"><span class="tico">▤</span><span><b>Summarize file</b><small>Read an attached text or code file</small></span></button>
+      <button class="mi" data-tool="removebg"><span class="tico">✂</span><span><b>Remove background</b><small>Local rembg cutout, then send the result</small></span></button>
+      <button class="mi" data-tool="time"><span class="tico">◷</span><span><b>Time &amp; date</b><small>Current local time, no model needed</small></span></button>
+      <button class="mi" data-tool="calc"><span class="tico">±</span><span><b>Calculator</b><small>Safe arithmetic: + - * / % **</small></span></button>
+      <button class="mi" data-tool=""><span class="tico">✦</span><span><b>Chat</b><small>Turn tools off</small></span></button>
+      <div class="menu-footer">Everything runs locally. Image tools use the same GPU as chat.</div>
+     </div>
+    </div>
     <div class="r">
      <button class="mdl" id="mb"><span id="mn">Vertex Core</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m3 4.5 3 3 3-3"/></svg></button>
      <div class="menu" id="menu">

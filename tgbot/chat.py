@@ -107,8 +107,14 @@ def build_messages(
     history: list[dict] | None = None,
     turns: int | None = None,
     system_prompt: str | None = None,
+    images: list[str] | None = None,
 ) -> list[dict]:
-    """System prompt + trimmed history + the new user turn."""
+    """System prompt + trimmed history + the new user turn.
+
+    ``images`` are base64-encoded image bytes for Ollama's vision models. Only
+    the new turn carries them; history stays text-only so the KV cache and
+    upload payload do not grow with every follow-up.
+    """
     from . import config
 
     limit = turns if turns is not None else config.CHAT_HISTORY_TURNS
@@ -117,10 +123,13 @@ def build_messages(
     # stopped reply); a reply without its user turn is not useful context.
     while prior and prior[0].get("role") != "user":
         prior.pop(0)
+    user_message: dict = {"role": "user", "content": text}
+    if images:
+        user_message["images"] = list(images)
     return [
         {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
         *prior,
-        {"role": "user", "content": text},
+        user_message,
     ]
 
 
@@ -198,11 +207,14 @@ def _ollama_reply(
     history: list[dict] | None,
     *,
     system_prompt: str | None = None,
+    images: list[str] | None = None,
 ) -> str:
     from . import config
     from .progress import report
 
-    messages = build_messages(text, history, system_prompt=system_prompt)
+    messages = build_messages(
+        text, history, system_prompt=system_prompt, images=images
+    )
     payload = _ollama_payload(
         messages,
         stream=False,
@@ -233,13 +245,16 @@ def _ollama_stream_reply(
     temperature: float = 0.7,
     top_p: float = 0.9,
     stop_event: threading.Event | None = None,
+    images: list[str] | None = None,
 ):
     """Yield Ollama's NDJSON token stream, one content chunk at a time."""
     from . import config
     from .progress import report
 
     max_new = max(16, max_new_tokens or config.CHAT_MAX_NEW_TOKENS)
-    messages = build_messages(text, history, system_prompt=system_prompt)
+    messages = build_messages(
+        text, history, system_prompt=system_prompt, images=images
+    )
     payload = _ollama_payload(
         messages,
         stream=True,
@@ -300,7 +315,12 @@ def _ollama_unload() -> None:
         pass
 
 
-def reply(text: str, history: list[dict] | None = None) -> tuple[str, float]:
+def reply(
+    text: str,
+    history: list[dict] | None = None,
+    *,
+    images: list[str] | None = None,
+) -> tuple[str, float]:
     """Answer `text` given prior [{role, content}] turns. Returns (reply, seconds)."""
     started = time.perf_counter()
     from . import config
@@ -311,8 +331,12 @@ def reply(text: str, history: list[dict] | None = None) -> tuple[str, float]:
     unload_diffusion()
 
     if config.CHAT_BACKEND == "ollama":
-        answer = _ollama_reply(text, history)
+        answer = _ollama_reply(text, history, images=images)
         return answer, time.perf_counter() - started
+    if images:
+        raise RuntimeError(
+            "image attachments need CHAT_BACKEND=ollama with a vision model"
+        )
 
     report(2, "loading model", label="chat")
     model, tokenizer = _get_model()
@@ -366,6 +390,7 @@ def stream_reply(
     temperature: float = 0.7,
     top_p: float = 0.9,
     stop_event: threading.Event | None = None,
+    images: list[str] | None = None,
 ):
     """Yield a reply token-by-token (used by the local web UI).
 
@@ -391,8 +416,13 @@ def stream_reply(
             temperature=temperature,
             top_p=top_p,
             stop_event=stop_event,
+            images=images,
         )
         return
+    if images:
+        raise RuntimeError(
+            "image attachments need CHAT_BACKEND=ollama with a vision model"
+        )
 
     from transformers import StoppingCriteria, StoppingCriteriaList, TextIteratorStreamer
 

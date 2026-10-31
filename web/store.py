@@ -8,6 +8,7 @@ features never contend for the same file.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from contextlib import closing
@@ -34,12 +35,30 @@ CREATE TABLE IF NOT EXISTS messages (
     status      TEXT NOT NULL DEFAULT 'done',
     elapsed_ms  INTEGER,
     client_id   TEXT,
+    attachments TEXT,
+    tool        TEXT,
     created_at  TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages(session_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS messages_client_idx
     ON messages(session_id, client_id) WHERE client_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS uploads (
+    id           TEXT PRIMARY KEY,
+    session_id   TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    filename     TEXT NOT NULL,
+    mime         TEXT NOT NULL,
+    size         INTEGER NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('image', 'text')),
+    path         TEXT NOT NULL,
+    text_content TEXT,
+    width        INTEGER,
+    height       INTEGER,
+    created_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS uploads_session_idx ON uploads(session_id);
 """
 
 
@@ -51,17 +70,52 @@ def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+def _message(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    """Decode the JSON attachment list stored beside a message."""
+    if row is None:
+        return None
+    message = dict(row)
+    raw = message.get("attachments")
+    if raw:
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError):
+            value = []
+        message["attachments"] = value if isinstance(value, list) else []
+    else:
+        message["attachments"] = []
+    return message
+
+
 class WebStore:
     """Small synchronous store; calls are fast enough for aiohttp handlers."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, upload_dir: str | Path | None = None) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.upload_dir = (
+            Path(upload_dir)
+            if upload_dir is not None
+            else self.path.parent / "web_uploads"
+        )
+        self.upload_dir.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.executescript(SCHEMA)
+            self._migrate(conn)
             conn.commit()
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Add columns introduced after the first local web database."""
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(messages)")
+        }
+        if "attachments" not in columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT")
+        if "tool" not in columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN tool TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=5.0)
@@ -100,7 +154,7 @@ class WebStore:
             session = dict(row)
             if include_messages:
                 session["messages"] = [
-                    dict(r)
+                    _message(r)
                     for r in conn.execute(
                         "SELECT * FROM messages WHERE session_id = ? ORDER BY id", (sid,)
                     )
@@ -176,21 +230,38 @@ class WebStore:
         status: str = "done",
         elapsed_ms: int | None = None,
         client_id: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        tool: str | None = None,
     ) -> dict[str, Any]:
         now = _now()
+        attachments_json = (
+            json.dumps(attachments, ensure_ascii=False) if attachments else None
+        )
         try:
             with closing(self._connect()) as conn, conn:
                 cur = conn.execute(
                     "INSERT INTO messages "
-                    "(session_id, role, content, preset, status, elapsed_ms, client_id, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (sid, role, content, preset, status, elapsed_ms, client_id, now),
+                    "(session_id, role, content, preset, status, elapsed_ms, client_id, "
+                    "attachments, tool, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        sid,
+                        role,
+                        content,
+                        preset,
+                        status,
+                        elapsed_ms,
+                        client_id,
+                        attachments_json,
+                        tool,
+                        now,
+                    ),
                 )
                 conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, sid))
                 row = conn.execute(
                     "SELECT * FROM messages WHERE id = ?", (cur.lastrowid,)
                 ).fetchone()
-            return dict(row)  # type: ignore[arg-type]
+            return _message(row)  # type: ignore[return-value]
         except sqlite3.IntegrityError:
             # duplicate client_id: return the row that already exists
             existing = self.find_turn_by_client_id(sid, client_id or "")
@@ -201,23 +272,25 @@ class WebStore:
     def get_messages(self, sid: str) -> list[dict[str, Any]]:
         with closing(self._connect()) as conn:
             return [
-                dict(r)
+                _message(r)
                 for r in conn.execute(
                     "SELECT * FROM messages WHERE session_id = ? ORDER BY id", (sid,)
                 )
             ]
 
-    def history_before(self, sid: str, before_id: int, turns: int) -> list[dict[str, str]]:
+    def history_before(
+        self, sid: str, before_id: int, turns: int
+    ) -> list[dict[str, Any]]:
         limit = max(0, int(turns)) * 2
         if limit == 0:
             return []
         with closing(self._connect()) as conn:
             rows = conn.execute(
-                "SELECT role, content FROM messages "
+                "SELECT role, content, attachments FROM messages "
                 "WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
                 (sid, before_id, limit),
             ).fetchall()
-        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        return [_message(r) for r in reversed(rows)]  # type: ignore[misc]
 
     def find_turn_by_client_id(
         self, sid: str, client_id: str
@@ -238,8 +311,8 @@ class WebStore:
                 (sid, user["id"]),
             ).fetchone()
         return {
-            "user": dict(user),
-            "assistant": dict(reply) if reply is not None else None,
+            "user": _message(user),
+            "assistant": _message(reply) if reply is not None else None,
         }
 
     def last_user_message(self, sid: str) -> dict[str, Any] | None:
@@ -249,7 +322,7 @@ class WebStore:
                 "ORDER BY id DESC LIMIT 1",
                 (sid,),
             ).fetchone()
-        return _row(row)
+        return _message(row)
 
     def last_assistant_message(self, sid: str) -> dict[str, Any] | None:
         with closing(self._connect()) as conn:
@@ -258,7 +331,7 @@ class WebStore:
                 "ORDER BY id DESC LIMIT 1",
                 (sid,),
             ).fetchone()
-        return _row(row)
+        return _message(row)
 
     def delete_last_assistant(self, sid: str) -> bool:
         """Delete only the reply that follows the latest user turn."""
@@ -274,6 +347,90 @@ class WebStore:
             if row is None:
                 return False
             conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
+        return True
+
+    # -- uploads ----------------------------------------------------------
+    def add_upload(
+        self,
+        *,
+        filename: str,
+        mime: str,
+        kind: str,
+        data: bytes,
+        text_content: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> dict[str, Any]:
+        uid = uuid.uuid4().hex[:20]
+        original = Path(filename or "attachment").name[:200] or "attachment"
+        suffix = Path(original).suffix.lower()[:12]
+        stored = f"{uid}{suffix}"
+        target = self.upload_dir / stored
+        target.write_bytes(data)
+        try:
+            with closing(self._connect()) as conn, conn:
+                conn.execute(
+                    "INSERT INTO uploads "
+                    "(id, filename, mime, size, kind, path, text_content, width, height, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        uid,
+                        original,
+                        mime,
+                        len(data),
+                        kind,
+                        stored,
+                        text_content,
+                        width,
+                        height,
+                        _now(),
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM uploads WHERE id = ?", (uid,)
+                ).fetchone()
+        except Exception:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        return dict(row)  # type: ignore[arg-type]
+
+    def get_upload(self, uid: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT * FROM uploads WHERE id = ?", (uid,)).fetchone()
+        return _row(row)
+
+    def attach_uploads(self, sids: list[str], session_id: str) -> None:
+        if not sids:
+            return
+        placeholders = ",".join("?" for _ in sids)
+        with closing(self._connect()) as conn, conn:
+            conn.execute(
+                f"UPDATE uploads SET session_id = ? WHERE id IN ({placeholders}) "
+                "AND (session_id IS NULL OR session_id = ?)",
+                (session_id, *sids, session_id),
+            )
+
+    def upload_path(self, row: dict[str, Any]) -> Path:
+        """Resolve a stored upload path without allowing traversal."""
+        path = (self.upload_dir / str(row.get("path") or "")).resolve()
+        root = self.upload_dir.resolve()
+        if path != root and root not in path.parents:
+            raise ValueError("invalid upload path")
+        return path
+
+    def delete_upload(self, uid: str) -> bool:
+        row = self.get_upload(uid)
+        if row is None:
+            return False
+        with closing(self._connect()) as conn, conn:
+            conn.execute("DELETE FROM uploads WHERE id = ?", (uid,))
+        try:
+            self.upload_path(row).unlink(missing_ok=True)
+        except (OSError, ValueError):
+            pass
         return True
 
     # -- diagnostics ------------------------------------------------------

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hmac
+import io
 import json
 import logging
 from pathlib import Path
+from urllib.parse import quote
 
 from aiohttp import web
 
@@ -17,8 +19,10 @@ from .service import (
     ChatService,
     DisabledError,
     normalize_preset,
+    normalize_tool,
 )
 from .store import WebStore
+from .uploads import guess_kind, mime_for, public_upload, text_excerpt
 
 log = logging.getLogger("web.app")
 
@@ -160,6 +164,122 @@ async def get_messages(request: web.Request) -> web.Response:
     return web.json_response({"messages": store.get_messages(sid)})
 
 
+# -- uploads --------------------------------------------------------------
+async def upload_attachment(request: web.Request) -> web.Response:
+    store: WebStore = request.app[STORE_KEY]
+    if not (request.content_type or "").startswith("multipart/"):
+        raise web.HTTPUnsupportedMediaType(text="send a multipart file upload")
+    reader = await request.multipart()
+    part = None
+    while True:
+        part = await reader.next()
+        if part is None:
+            break
+        if part.name == "file":
+            break
+    if part is None or part.name != "file":
+        raise web.HTTPBadRequest(text="a file field is required")
+
+    filename = Path(part.filename or "attachment").name[:200] or "attachment"
+    mime = mime_for(filename, part.headers.get("Content-Type", ""))
+    kind = guess_kind(filename, mime)
+    if kind is None:
+        raise web.HTTPUnsupportedMediaType(
+            text="attach an image (PNG/JPEG/WebP) or a UTF-8 text/code file"
+        )
+
+    chunks: list[bytes] = []
+    size = 0
+    while True:
+        chunk = await part.read_chunk(64 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > config.WEB_MAX_UPLOAD_BYTES:
+            raise web.HTTPRequestEntityTooLarge(
+                max_size=config.WEB_MAX_UPLOAD_BYTES, actual_size=size
+            )
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    if not data:
+        raise web.HTTPBadRequest(text="the uploaded file is empty")
+
+    text_content: str | None = None
+    width: int | None = None
+    height: int | None = None
+    if kind == "image":
+        from PIL import Image
+
+        try:
+            with Image.open(io.BytesIO(data)) as image:
+                image.verify()
+            with Image.open(io.BytesIO(data)) as image:
+                width, height = image.size
+        except Exception:
+            raise web.HTTPUnsupportedMediaType(text="that image could not be read")
+    else:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise web.HTTPUnsupportedMediaType(text="text files must be UTF-8")
+        if "\x00" in text:
+            raise web.HTTPUnsupportedMediaType(text="that does not look like a text file")
+        text_content = text_excerpt(text, config.WEB_ATTACHMENT_TEXT_LIMIT)
+
+    row = store.add_upload(
+        filename=filename,
+        mime=mime,
+        kind=kind,
+        data=data,
+        text_content=text_content,
+        width=width,
+        height=height,
+    )
+    return web.json_response({"upload": public_upload(row)}, status=201)
+
+
+async def get_upload_content(request: web.Request) -> web.FileResponse:
+    store: WebStore = request.app[STORE_KEY]
+    row = store.get_upload(request.match_info["uid"])
+    if row is None:
+        raise web.HTTPNotFound(text="attachment not found")
+    try:
+        path = store.upload_path(row)
+    except ValueError:
+        raise web.HTTPNotFound(text="attachment not found")
+    if not path.is_file():
+        raise web.HTTPNotFound(text="attachment not found")
+    safe_name = quote(str(row.get("filename") or "attachment"), safe="")
+    if row.get("kind") == "image":
+        mime = str(row.get("mime") or "")
+        if not mime.startswith("image/"):
+            guessed = mime_for(str(row.get("filename") or ""), "")
+            mime = guessed if guessed.startswith("image/") else "application/octet-stream"
+    else:
+        # Never render an uploaded HTML/JS file as active content.
+        mime = "text/plain; charset=utf-8"
+    return web.FileResponse(
+        path,
+        headers={
+            "Content-Type": mime,
+            "Content-Disposition": f"inline; filename*=UTF-8''{safe_name}",
+            "Cache-Control": "private, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+async def delete_upload(request: web.Request) -> web.Response:
+    store: WebStore = request.app[STORE_KEY]
+    row = store.get_upload(request.match_info["uid"])
+    if row is None:
+        raise web.HTTPNotFound(text="attachment not found")
+    if row.get("session_id"):
+        raise web.HTTPConflict(text="that attachment is already in a chat")
+    store.delete_upload(request.match_info["uid"])
+    return web.json_response({"ok": True})
+
+
 # -- chat -----------------------------------------------------------------
 async def post_message(request: web.Request) -> web.StreamResponse:
     store: WebStore = request.app[STORE_KEY]
@@ -174,8 +294,15 @@ async def post_message(request: web.Request) -> web.StreamResponse:
     data = await _json(request)
     regenerate = bool(data.get("regenerate"))
     content = str(data.get("content") or "").strip()
-    if not regenerate and not content:
-        raise web.HTTPBadRequest(text="content is required")
+    raw_attachments = data.get("attachments") or []
+    if not isinstance(raw_attachments, list):
+        raise web.HTTPBadRequest(text="attachments must be a list")
+    attachment_ids = [
+        str(item)[:64] for item in raw_attachments if str(item).strip()
+    ][: config.WEB_MAX_ATTACHMENTS]
+    tool = normalize_tool(str(data.get("tool") or ""))
+    if not regenerate and not content and not attachment_ids and tool != "time":
+        raise web.HTTPBadRequest(text="content or an attachment is required")
     if len(content) > 8000:
         raise web.HTTPRequestEntityTooLarge(max_size=8000, actual_size=len(content))
 
@@ -205,6 +332,8 @@ async def post_message(request: web.Request) -> web.StreamResponse:
             preset=preset,
             client_id=client_id,
             regenerate=regenerate,
+            attachments=attachment_ids,
+            tool=tool,
         )
         try:
             async for event, payload in stream:
@@ -236,12 +365,14 @@ async def post_message(request: web.Request) -> web.StreamResponse:
 def create_app(
     store: WebStore | None = None, service: ChatService | None = None
 ) -> web.Application:
-    store = store or WebStore(config.WEB_STORE_PATH)
+    store = store or WebStore(
+        config.WEB_STORE_PATH, upload_dir=config.WEB_UPLOAD_DIR
+    )
     service = service or ChatService(store)
 
     app = web.Application(
         middlewares=[errors_middleware, guard_middleware],
-        client_max_size=1024 * 1024,
+        client_max_size=config.WEB_MAX_UPLOAD_BYTES + 1024 * 1024,
     )
     app[STORE_KEY] = store
     app[SERVICE_KEY] = service
@@ -256,6 +387,9 @@ def create_app(
     app.router.add_post("/api/sessions/{sid}/restore", restore_session)
     app.router.add_get("/api/sessions/{sid}/messages", get_messages)
     app.router.add_post("/api/sessions/{sid}/messages", post_message)
+    app.router.add_post("/api/uploads", upload_attachment)
+    app.router.add_get("/api/uploads/{uid}/content", get_upload_content)
+    app.router.add_delete("/api/uploads/{uid}", delete_upload)
     app.router.add_route("*", "/api/{tail:.*}", api_not_found)
     app.router.add_static("/static/", STATIC, show_index=False)
     return app

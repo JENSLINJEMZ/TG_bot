@@ -10,7 +10,7 @@ Background removal · AI outfit / scene editing · image-to-video · a local cha
 [![aiogram](https://img.shields.io/badge/aiogram-3.x-2CA5E0.svg)](https://docs.aiogram.dev/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.11%20%2B%20CUDA-EE4C2C.svg)](https://pytorch.org/)
 [![Runs locally](https://img.shields.io/badge/inference-local-success.svg)](#how-it-works)
-[![Tests](https://img.shields.io/badge/tests-106%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-119%20passing-brightgreen.svg)](#testing)
 
 </div>
 
@@ -311,14 +311,33 @@ uv run python -m web --no-browser    # do not open a tab
   temperature, top-p) on the selected backend model.
 - Deep links work: `http://127.0.0.1:8765/?s=<session-id>`. **Share** copies one.
 - Search filters the recents list; `Ctrl/Cmd+Shift+O` starts a new chat.
+- **Attachments**: the paperclip, drag-and-drop, or paste accepts PNG/JPEG/WebP
+  images and UTF-8 text/code files. Images are downscaled to 1600 px in the
+  browser and sent to the Ollama vision model; text is embedded in the prompt.
+  Uploads are stored under
+  `data/web_uploads` (`WEB_UPLOAD_DIR`), not inside the database.
+- **Tools**: Describe image, Summarize file, Remove background, Time & date and
+  Calculator. The first two use the model; background removal runs the local
+  rembg cutout and returns an image; time and calculator are deterministic.
 - The UI is the original Vertex shell, with the two fonts vendored under
   `web/static/fonts/` so it looks the same offline.
 - Localhost only by default. Set `WEB_TOKEN` to also require
   `X-Web-Token`/`?token=`, and `WEB_HOST`/`WEB_PORT` to change the bind.
 
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `WEB_STORE_PATH` | `data/web.db` | web sessions and messages |
+| `WEB_UPLOAD_DIR` | `data/web_uploads` | uploaded images/text files |
+| `WEB_MAX_UPLOAD_BYTES` | `20971520` | per-file upload cap (20 MB) |
+| `WEB_MAX_ATTACHMENTS` | `4` | attachments per message |
+| `WEB_ATTACHMENT_TEXT_LIMIT` | `8000` | characters embedded from a text file |
+| `WEB_TOKEN` | empty | optional shared secret for API/image requests |
+
 > With the default transformers backend the web process loads its own copy of
 > SmolLM2 (roughly 1 GB extra RAM). With `CHAT_BACKEND=ollama` the bot and the
 > web UI share one Qwen3.5 model in the Ollama server, so only one copy uses VRAM.
+> Image attachments and the Describe tool need `CHAT_BACKEND=ollama`; the
+> Remove background tool works on either backend and unloads the chat model first.
 
 ---
 
@@ -453,8 +472,9 @@ tgbot/
   prefetch.py     pre-download the model weights
 web/
   app.py          aiohttp routes, SSE endpoint, static files
-  service.py      single-flight chat streaming bridge + presets
-  store.py        SQLite sessions/messages (data/web.db, WAL)
+  service.py      single-flight chat streaming bridge + presets + local tools
+  store.py        SQLite sessions/messages/uploads (data/web.db, WAL)
+  uploads.py      attachment type detection and public metadata
   static/         the Vertex shell (index.html, app.js, fonts)
 install.sh        bootstrap installer (Linux / macOS)
 install.ps1       bootstrap installer (Windows)
@@ -467,12 +487,12 @@ tests/            pytest suite
 ## Testing
 
 ```bash
-uv run pytest tests/ -q      # 106 tests
+uv run pytest tests/ -q      # 119 tests
 ```
 
 The suite covers colour parsing, the outfit guard, scheduling/queueing, storage,
-the local store, chat and rate limiting, plus the web session store, SSE service,
-aiohttp API and the Vertex shell's fidelity.
+the local store, chat and rate limiting, plus the web session store, uploads,
+attachments, local tools, SSE service, aiohttp API and the Vertex shell's fidelity.
 
 ---
 

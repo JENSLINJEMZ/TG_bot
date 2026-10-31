@@ -42,6 +42,20 @@ def test_demo_handlers_and_canned_data_are_gone():
     assert "Share</button>" in html
 
 
+def test_attachments_and_tools_are_wired_to_real_controls():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'id="file"' in html
+    assert 'id="attachments"' in html
+    assert 'id="toolsmenu"' in html
+    assert 'data-tool="describe"' in html
+    assert 'data-tool="removebg"' in html
+    assert "Text-only build" not in js
+    assert "/api/uploads" in js
+    assert "addFiles" in js
+    assert "finalizeStream(el, data.content || state.streamRaw, data.message_id, data.attachments || [])" in js
+
+
 def test_app_js_keeps_shell_behaviour():
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     assert "document.body.classList.toggle('chatting'" in js

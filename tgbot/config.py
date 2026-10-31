@@ -248,6 +248,22 @@ _web_store_path = Path(_raw_web_store)
 if not _web_store_path.is_absolute():
     _web_store_path = Path(__file__).resolve().parent.parent / _web_store_path
 WEB_STORE_PATH = str(_web_store_path)
+_raw_web_upload = os.getenv("WEB_UPLOAD_DIR", "data/web_uploads").strip() or "data/web_uploads"
+_web_upload_path = Path(_raw_web_upload)
+if not _web_upload_path.is_absolute():
+    _web_upload_path = Path(__file__).resolve().parent.parent / _web_upload_path
+WEB_UPLOAD_DIR = str(_web_upload_path)
+# one attachment request; the browser downscales images before upload
+WEB_MAX_UPLOAD_BYTES = max(
+    1, int(os.getenv("WEB_MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)) or "0")
+)
+WEB_MAX_ATTACHMENTS = max(
+    1, min(8, int(os.getenv("WEB_MAX_ATTACHMENTS", "4") or "4"))
+)
+# text files are embedded in the prompt; keep them inside the 4K chat context
+WEB_ATTACHMENT_TEXT_LIMIT = max(
+    1000, int(os.getenv("WEB_ATTACHMENT_TEXT_LIMIT", "8000") or "8000")
+)
 # optional shared secret; empty means localhost-only, no token required
 WEB_TOKEN = os.getenv("WEB_TOKEN", "").strip()
 

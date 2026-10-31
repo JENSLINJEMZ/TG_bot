@@ -116,6 +116,90 @@ def test_counts(tmp_path):
     assert store.counts() == {"sessions": 1, "messages": 1}
 
 
+def test_message_attachments_and_tool_round_trip(tmp_path):
+    store = WebStore(tmp_path / "web.db")
+    session = store.create_session()
+    attachment = {
+        "id": "abc",
+        "name": "notes.txt",
+        "mime": "text/plain",
+        "size": 5,
+        "kind": "text",
+        "url": "/api/uploads/abc/content",
+    }
+    user = store.add_message(
+        session["id"],
+        "user",
+        "",
+        attachments=[attachment],
+        tool="summarize",
+    )
+    assert user["attachments"] == [attachment]
+    assert user["tool"] == "summarize"
+
+    loaded = store.get_session(session["id"], include_messages=True)
+    assert loaded["messages"][0]["attachments"] == [attachment]
+    assert store.last_user_message(session["id"])["tool"] == "summarize"
+
+
+def test_upload_lifecycle(tmp_path):
+    store = WebStore(tmp_path / "web.db")
+    session = store.create_session()
+    row = store.add_upload(
+        filename="notes.txt",
+        mime="text/plain",
+        kind="text",
+        data=b"hello",
+        text_content="hello",
+    )
+    assert row["session_id"] is None
+    assert store.get_upload(row["id"])["text_content"] == "hello"
+    assert store.upload_path(row).read_bytes() == b"hello"
+
+    store.attach_uploads([row["id"]], session["id"])
+    assert store.get_upload(row["id"])["session_id"] == session["id"]
+    assert store.delete_upload(row["id"]) is True
+    assert store.get_upload(row["id"]) is None
+    assert not store.upload_path(row).exists()
+
+
+def test_old_message_schema_is_migrated(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "web.db"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT 'New chat',
+                preset TEXT NOT NULL DEFAULT 'core',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                deleted_at TEXT
+            );
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                preset TEXT,
+                status TEXT NOT NULL DEFAULT 'done',
+                elapsed_ms INTEGER,
+                client_id TEXT,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+    store = WebStore(path)
+    session = store.create_session()
+    message = store.add_message(
+        session["id"], "user", "hi", attachments=[], tool="calc"
+    )
+    assert message["tool"] == "calc"
+    assert message["attachments"] == []
+
+
 def test_two_threads_use_separate_connections(tmp_path):
     store = WebStore(tmp_path / "web.db")
     session = store.create_session()

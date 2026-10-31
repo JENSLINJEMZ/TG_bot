@@ -105,6 +105,16 @@ def test_reply_uses_ollama(ollama):
     assert body["messages"][-1] == {"role": "user", "content": "hi"}
 
 
+def test_reply_attaches_base64_images_to_the_new_turn(ollama):
+    chat.reply("look", images=["YWJj"])
+    _, body = ollama.requests[-1]
+    assert body["messages"][-1] == {
+        "role": "user",
+        "content": "look",
+        "images": ["YWJj"],
+    }
+
+
 def test_stream_reply_uses_ollama(ollama):
     chunks = list(chat.stream_reply("hi", system_prompt=chat.WEB_SYSTEM_PROMPT))
     assert chunks == ["Hel", "lo"]
