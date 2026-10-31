@@ -69,10 +69,12 @@ CHAT_THREADS = max(1, int(os.getenv("CHAT_THREADS", "2") or "2"))
 # --- local Ollama chat backend (CHAT_BACKEND=ollama) ---
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434").strip().rstrip("/")
 OLLAMA_URL = OLLAMA_URL or "http://127.0.0.1:11434"
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b").strip() or "qwen3:8b"
-# 4096 keeps the KV cache small enough for an 8 GB laptop GPU.
+OLLAMA_MODEL = os.getenv(
+    "OLLAMA_MODEL", "huihui_ai/qwen3.5-abliterated:9b"
+).strip() or "huihui_ai/qwen3.5-abliterated:9b"
+# 4096 keeps the KV cache small; lower to 2048 if VRAM is tight.
 OLLAMA_NUM_CTX = max(512, int(os.getenv("OLLAMA_NUM_CTX", "4096") or "4096"))
-# 1 = Qwen3 thinks before answering (slower); 0 = direct answers.
+# 1 = the model thinks before answering (slower); 0 = direct answers.
 OLLAMA_THINK = os.getenv("OLLAMA_THINK", "0").strip() == "1"
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "5m").strip() or "5m"
 OLLAMA_TIMEOUT = max(5, int(os.getenv("OLLAMA_TIMEOUT", "300") or "300"))

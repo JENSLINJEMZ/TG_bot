@@ -24,7 +24,7 @@ Send a photo (or two), get back an edited image or a short MP4. The bot is a thi
 - **Background remover** — [rembg](https://github.com/danielgatis/rembg) / U2Net cutout, composited onto a solid colour, a gradient, or transparency.
 - **AI editor** — [Qwen-Image-Edit-2509](https://huggingface.co/Qwen/Qwen-Image-Edit-2509) (4-bit [Nunchaku](https://github.com/nunchaku-tech/nunchaku) SVDQuant) for outfit changes, scene composition and prompt-driven restyle.
 - **Image-to-video** — Wan 2.2 I2V (**14B** via ComfyUI, or 5B in-process) and LTX-Video.
-- **Chat** — SmolLM2-135M-Instruct by default, or **Qwen3-8B** through a local [Ollama](https://ollama.com/) server for much better answers.
+- **Chat** — SmolLM2-135M-Instruct by default, or **Qwen3.5-9B** through a local [Ollama](https://ollama.com/) server for much better answers.
 
 Everything is stored in a local SQLite database. Nothing is sent to a third-party service.
 
@@ -44,7 +44,7 @@ Everything is stored in a local SQLite database. Nothing is sent to a third-part
 | **Restyle outfit** | 1 photo + prompt | Qwen redraws from free text (e.g. `navy suit`) |
 | **Animate photo** | 1 photo + motion prompt + length | image → short MP4 |
 | **2-photo video** | 2 photos + action prompt + length | combine into one frame, then animate it |
-| **Chat** | text | local LLM reply (SmolLM2 or Qwen3-8B) |
+| **Chat** | text | local LLM reply (SmolLM2 or Qwen3.5-9B) |
 
 Plus: a job queue, per-user rate limiting, a live progress bar in chat, an allow-list,
 owner-only admin commands and a local archive CLI.
@@ -81,7 +81,7 @@ Telegram  ──►  tgbot/bot.py (aiogram, long polling)
 
 The heavy **editor auto-unloads the chat / diffusion models** first (and vice
 versa) so only one large model is ever resident. With the Ollama backend it also
-asks Ollama to evict Qwen3 before an image or video job.
+asks Ollama to evict the chat model before an image or video job.
 
 ---
 
@@ -96,7 +96,7 @@ asks Ollama to evict Qwen3 before an image or video job.
 
 Without a usable GPU the bot still runs: background, chat and a lightweight tint
 fallback for restyle/combine all work on CPU. The built-in SmolLM2 chat model is
-CPU-only; the optional Qwen3-8B backend uses the GPU (see below).
+CPU-only; the optional Qwen3.5-9B backend uses the GPU (see below).
 
 ---
 
@@ -187,22 +187,23 @@ commented list). The most useful ones:
 ### Chat & CPU fallback
 
 The default chat model is tiny and runs on CPU. For much better answers, run
-**Qwen3-8B** through a local Ollama server:
+**Qwen3.5-9B (abliterated)** through a local Ollama server:
 
 ```bash
-ollama pull qwen3:8b
+ollama pull huihui_ai/qwen3.5-abliterated:9b
 ```
 
 Then set these in `.env`:
 
 ```ini
 CHAT_BACKEND=ollama
-OLLAMA_MODEL=qwen3:8b
+OLLAMA_MODEL=huihui_ai/qwen3.5-abliterated:9b
 OLLAMA_NUM_CTX=4096
 ```
 
-Qwen3-8B Q4_K_M is ~5.2 GB. It fits an 8 GB GPU with a 4K context — close other
-GPU apps first. The bot asks Ollama to evict it before the image/video models run.
+Qwen3.5-9B abliterated Q4_K_M is ~6.6 GB. It fits an 8 GB GPU with a 4K context,
+but VRAM is tight — close other GPU apps first. The bot asks Ollama to evict it
+before the image/video models run.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -211,9 +212,9 @@ GPU apps first. The bot asks Ollama to evict it before the image/video models ru
 | `CHAT_MODEL` | `HuggingFaceTB/SmolLM2-135M-Instruct` | transformers model id |
 | `CHAT_MAX_NEW_TOKENS` | `160` | reply length cap |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | local Ollama server |
-| `OLLAMA_MODEL` | `qwen3:8b` | Ollama model tag |
+| `OLLAMA_MODEL` | `huihui_ai/qwen3.5-abliterated:9b` | Ollama model tag |
 | `OLLAMA_NUM_CTX` | `4096` | context window (lower it if VRAM is tight) |
-| `OLLAMA_THINK` | `0` | `1` lets Qwen3 think first (slower) |
+| `OLLAMA_THINK` | `0` | `1` lets the model think first (slower) |
 | `OLLAMA_KEEP_ALIVE` | `5m` | how long Ollama keeps the model in VRAM |
 | `OLLAMA_TIMEOUT` | `300` | request timeout in seconds |
 | `DIFFUSE_ENABLED` | `1` | CPU `tiny-sd` fallback for Restyle (set `0` when the GPU editor works) |
@@ -317,7 +318,7 @@ uv run python -m web --no-browser    # do not open a tab
 
 > With the default transformers backend the web process loads its own copy of
 > SmolLM2 (roughly 1 GB extra RAM). With `CHAT_BACKEND=ollama` the bot and the
-> web UI share one Qwen3 model in the Ollama server, so only one copy uses VRAM.
+> web UI share one Qwen3.5 model in the Ollama server, so only one copy uses VRAM.
 
 ---
 
