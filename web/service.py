@@ -29,19 +29,19 @@ from .uploads import public_upload, text_excerpt
 PRESETS: dict[str, dict[str, object]] = {
     "core": {
         "label": "Vertex Core",
-        "max_new_tokens": 384,
+        "max_new_tokens": 8192,
         "temperature": 0.7,
         "top_p": 0.9,
     },
     "max": {
         "label": "Vertex Max",
-        "max_new_tokens": 768,
+        "max_new_tokens": 12288,
         "temperature": 0.8,
         "top_p": 0.95,
     },
     "lite": {
         "label": "Vertex Lite",
-        "max_new_tokens": 192,
+        "max_new_tokens": 2048,
         "temperature": 0.5,
         "top_p": 0.9,
     },
@@ -60,7 +60,8 @@ TOOLS: dict[str, str] = {
 }
 
 # A hard ceiling so a runaway generation can never hold the lock forever.
-MAX_GENERATION_SECONDS = 240.0
+# Long code replies can legitimately take 10-15 minutes on an 8 GB laptop GPU.
+MAX_GENERATION_SECONDS = 1800.0
 MAX_VISION_IMAGES = 2
 
 _BINOPS = {

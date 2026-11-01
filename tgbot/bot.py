@@ -270,6 +270,21 @@ def _cooldown_seconds(message: Message) -> float:
     return rate.wait_left(user.id)
 
 
+def _split_for_telegram(text: str, limit: int = 3900) -> list[str]:
+    """Split a long reply at line boundaries so Telegram's 4096 limit is safe."""
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        cut = remaining.rfind("\n", 0, limit)
+        if cut < limit // 2:
+            cut = limit
+        chunks.append(remaining[:cut])
+        remaining = remaining[cut:].lstrip("\n")
+    if remaining:
+        chunks.append(remaining)
+    return chunks or [""]
+
+
 def _extension(data: bytes) -> tuple[str, str]:
     if data.startswith(b"\xff\xd8"):
         return "jpg", "image/jpeg"
@@ -624,7 +639,9 @@ async def on_chat_text(message: Message, state: FSMContext) -> None:
         )
         if stored:
             log.info("chat not stored remotely: %s", stored.strip())
-        await message.answer(f"🤖 {answer}\n\n[{elapsed_ms} ms]")
+        reply_text = f"🤖 {answer}\n\n[{elapsed_ms} ms]"
+        for chunk in _split_for_telegram(reply_text):
+            await message.answer(chunk)
 
     # quiet path: with an empty queue the worker takes this immediately, so the
     # user still gets exactly one reply message (no extra "queued" noise)

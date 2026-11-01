@@ -62,7 +62,7 @@ CHAT_BACKEND = os.getenv("CHAT_BACKEND", "transformers").strip().lower() or "tra
 if CHAT_BACKEND not in ("transformers", "ollama"):
     CHAT_BACKEND = "transformers"
 CHAT_MODEL = os.getenv("CHAT_MODEL", "HuggingFaceTB/SmolLM2-135M-Instruct").strip()
-CHAT_MAX_NEW_TOKENS = max(16, int(os.getenv("CHAT_MAX_NEW_TOKENS", "160") or "160"))
+CHAT_MAX_NEW_TOKENS = max(16, int(os.getenv("CHAT_MAX_NEW_TOKENS", "8192") or "8192"))
 CHAT_HISTORY_TURNS = max(0, int(os.getenv("CHAT_HISTORY_TURNS", "4") or "4"))
 CHAT_THREADS = max(1, int(os.getenv("CHAT_THREADS", "2") or "2"))
 
@@ -72,12 +72,14 @@ OLLAMA_URL = OLLAMA_URL or "http://127.0.0.1:11434"
 OLLAMA_MODEL = os.getenv(
     "OLLAMA_MODEL", "huihui_ai/qwen3.5-abliterated:9b"
 ).strip() or "huihui_ai/qwen3.5-abliterated:9b"
-# 4096 keeps the KV cache small; lower to 2048 if VRAM is tight.
-OLLAMA_NUM_CTX = max(512, int(os.getenv("OLLAMA_NUM_CTX", "4096") or "4096"))
+# 16384 leaves room for a complete 700+ line file plus recent history. It is
+# the stable ceiling on an 8 GB GPU; 32K pushes the KV cache into system RAM and
+# can make long generations unreliable.
+OLLAMA_NUM_CTX = max(512, int(os.getenv("OLLAMA_NUM_CTX", "16384") or "16384"))
 # 1 = the model thinks before answering (slower); 0 = direct answers.
 OLLAMA_THINK = os.getenv("OLLAMA_THINK", "0").strip() == "1"
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "5m").strip() or "5m"
-OLLAMA_TIMEOUT = max(5, int(os.getenv("OLLAMA_TIMEOUT", "300") or "300"))
+OLLAMA_TIMEOUT = max(5, int(os.getenv("OLLAMA_TIMEOUT", "1800") or "1800"))
 
 # GPU outfit editor: Qwen-Image-Edit-2509 (4-bit Nunchaku). Needs CUDA + nunchaku;
 # falls back to the diffuse/tint engines when unavailable.

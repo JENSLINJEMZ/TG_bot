@@ -198,25 +198,30 @@ Then set these in `.env`:
 ```ini
 CHAT_BACKEND=ollama
 OLLAMA_MODEL=huihui_ai/qwen3.5-abliterated:9b
-OLLAMA_NUM_CTX=4096
+OLLAMA_NUM_CTX=16384
+CHAT_MAX_NEW_TOKENS=8192
+OLLAMA_TIMEOUT=1800
 ```
 
-Qwen3.5-9B abliterated Q4_K_M is ~6.6 GB. It fits an 8 GB GPU with a 4K context,
-but VRAM is tight — close other GPU apps first. The bot asks Ollama to evict it
-before the image/video models run.
+Qwen3.5-9B abliterated Q4_K_M is ~6.6 GB. A 16K context leaves room for a
+complete 700+ line source file plus recent history and is the stable ceiling on
+an 8 GB GPU; 32K pushes the KV cache into system RAM and can make long
+generations unreliable. The bot asks Ollama to evict the model before the
+image/video models run.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `CHAT_ENABLED` | `1` | show the Chat button |
 | `CHAT_BACKEND` | `transformers` | `transformers` (built-in SmolLM2) or `ollama` |
 | `CHAT_MODEL` | `HuggingFaceTB/SmolLM2-135M-Instruct` | transformers model id |
-| `CHAT_MAX_NEW_TOKENS` | `160` | reply length cap |
+| `CHAT_MAX_NEW_TOKENS` | `8192` | reply length cap (web presets override it) |
+| `CHAT_HISTORY_TURNS` | `4` | previous user/assistant turns sent as context |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | local Ollama server |
 | `OLLAMA_MODEL` | `huihui_ai/qwen3.5-abliterated:9b` | Ollama model tag |
-| `OLLAMA_NUM_CTX` | `4096` | context window (lower it if VRAM is tight) |
+| `OLLAMA_NUM_CTX` | `16384` | context window; 32K can be unstable on 8 GB |
 | `OLLAMA_THINK` | `0` | `1` lets the model think first (slower) |
 | `OLLAMA_KEEP_ALIVE` | `5m` | how long Ollama keeps the model in VRAM |
-| `OLLAMA_TIMEOUT` | `300` | request timeout in seconds |
+| `OLLAMA_TIMEOUT` | `1800` | request timeout in seconds (long code needs this) |
 | `DIFFUSE_ENABLED` | `1` | CPU `tiny-sd` fallback for Restyle (set `0` when the GPU editor works) |
 | `DIFFUSE_MODEL` | `segmind/tiny-sd` | fallback restyle model |
 
@@ -307,8 +312,10 @@ uv run python -m web --no-browser    # do not open a tab
   (`WEB_STORE_PATH`), with WAL + a busy timeout.
 - Replies stream token-by-token over SSE; the **Stop** button cancels at the
   next token and keeps the partial answer.
-- **Vertex Core / Max / Lite** map to real sampling presets (reply length,
-  temperature, top-p) on the selected backend model.
+- **Vertex Core / Max / Lite** map to real sampling presets on the selected
+  backend model: Core allows up to 8K output tokens, Max up to 12K for very long
+  code files, and Lite up to 2K for quick answers. The system prompt tells the
+  model to finish the whole file without placeholders or omitted sections.
 - Deep links work: `http://127.0.0.1:8765/?s=<session-id>`. **Share** copies one.
 - Search filters the recents list; `Ctrl/Cmd+Shift+O` starts a new chat.
 - **Attachments**: the paperclip, drag-and-drop, or paste accepts PNG/JPEG/WebP

@@ -440,7 +440,9 @@ function addAssistantStream() {
 
 function scheduleStreamRender() {
   if (state.raf) return;
-  state.raf = requestAnimationFrame(() => {
+  // Long code replies can grow to tens of KB; repainting markdown at 60 fps
+  // makes the tab sluggish, so coalesce chunks into ~12 renders per second.
+  state.raf = setTimeout(() => {
     state.raf = 0;
     const el = state.streamEl;
     if (!el) return;
@@ -452,7 +454,7 @@ function scheduleStreamRender() {
     const near = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 160;
     if (near) sc.scrollTop = sc.scrollHeight;
     $('#jump').hidden = near;
-  });
+  }, 80);
 }
 
 function finalizeStream(el, raw, messageId, attachments = []) {

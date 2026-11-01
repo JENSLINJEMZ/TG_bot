@@ -97,7 +97,7 @@ def test_reply_uses_ollama(ollama):
     path, body = ollama.requests[-1]
     assert path == "/api/chat"
     assert body["model"] == "qwen3:8b"
-    assert body["stream"] is False
+    assert body["stream"] is True
     assert body["think"] is False
     assert body["options"]["num_ctx"] == 4096
     assert body["options"]["num_predict"] == config.CHAT_MAX_NEW_TOKENS
@@ -132,6 +132,23 @@ def test_stream_reply_stops_on_event(ollama):
         chunks.append(chunk)
         stop.set()
     assert chunks == ["Hel"]
+
+
+def test_trim_for_context_drops_old_turns(monkeypatch):
+    monkeypatch.setattr(config, "OLLAMA_NUM_CTX", 4096)
+    messages = [{"role": "system", "content": "system"}]
+    for i in range(12):
+        messages.append({"role": "user", "content": f"old user {i} " + "x" * 500})
+        messages.append({"role": "assistant", "content": f"old answer {i} " + "y" * 500})
+    current = {"role": "user", "content": "write the complete file"}
+    messages.append(current)
+
+    trimmed = chat._trim_for_context(messages, 2048)
+
+    assert trimmed[0] == messages[0]
+    assert trimmed[-1] == current
+    assert len(trimmed) < len(messages)
+    assert trimmed[1]["role"] == "user"
 
 
 def test_ollama_http_error_is_reported(ollama, monkeypatch):

@@ -54,6 +54,14 @@ def _noop_save_chat(**_kwargs):
     return ""
 
 
+def test_split_for_telegram_keeps_chunks_under_the_limit():
+    text = "\n".join(f"line {i:04d} " + "x" * 40 for i in range(500))
+    chunks = bot._split_for_telegram(text, limit=1000)
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 1000 for chunk in chunks)
+    assert "".join(chunks).replace("\n", "") == text.replace("\n", "")
+
+
 def test_chat_handler_replies_and_keeps_history(monkeypatch) -> None:
     async def scenario() -> None:
         msg = FakeMessage("hello")

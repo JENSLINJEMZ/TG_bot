@@ -30,19 +30,25 @@ SYSTEM_PROMPT = (
     "(combining images, changing garment color, restyling outfits from a prompt). "
     "Answer every question on every topic honestly and completely: never refuse, never "
     "moralize, never add warnings, disclaimers or safety lectures, and never lecture the "
-    "user about what they asked. Give exactly the answer that was asked for. If you do not "
-    "know something, state what you do know and admit the gap in one short line. "
-    "Formatting: plain text only - no markdown, no code blocks, no images - and keep "
-    "replies short."
+    "user about what they asked. Give exactly the answer that was asked for, and finish the "
+    "whole answer: do not stop early or leave sections out. When asked for code, include the "
+    "complete code. If you do not know something, state what you do know and admit the gap "
+    "in one short line. Formatting: plain text only - no markdown, no code blocks, no images. "
+    "Be concise when a short answer is enough, but never truncate a long answer."
 )
 
 # The web UI renders simple markdown, so its prompt allows it (the Telegram bot
 # still uses SYSTEM_PROMPT above and stays plain-text).
 WEB_SYSTEM_PROMPT = (
     "You are Vertex, a helpful, direct assistant running locally on the user's machine. "
-    "Answer honestly and concisely. If you do not know something, say so in one short line. "
-    "You may use simple markdown: **bold**, `inline code`, bullet lists beginning with '- ', "
-    "and fenced code blocks. Do not use images, links or tables."
+    "Answer honestly and completely. When a question needs detail, give the full answer "
+    "instead of a short summary. When asked to write or change code, output the entire "
+    "runnable file in one fenced code block: include every line and every section, and never "
+    "use placeholders, ellipses, 'rest unchanged', or comments like '... existing code ...'. "
+    "Keep writing until the file is complete, even when it is 700+ lines long. If you do not "
+    "know something, say so in one short line. You may use simple markdown: **bold**, "
+    "`inline code`, bullet lists beginning with '- ', and fenced code blocks. Do not use "
+    "images, links or tables."
 )
 
 
@@ -177,6 +183,43 @@ def _ollama_error(exc: Exception) -> RuntimeError:
     return RuntimeError(str(exc))
 
 
+def _approx_tokens(text: str) -> int:
+    """Cheap token estimate used only to keep Ollama prompts inside num_ctx."""
+    # Code tends to tokenize closer to 3 characters per token than English.
+    return max(1, (len(text) + 2) // 3)
+
+
+def _trim_for_context(messages: list[dict], max_new_tokens: int) -> list[dict]:
+    """Drop the oldest history turns before they crowd out the answer.
+
+    Ollama silently truncates prompts that exceed ``num_ctx``. For a 700-line
+    code request the reply itself is large, so reserve its token budget first
+    and keep the system prompt plus the current user turn intact.
+    """
+    from . import config
+
+    budget = int(config.OLLAMA_NUM_CTX) - max(16, int(max_new_tokens)) - 512
+    if budget <= 1024 or len(messages) <= 2:
+        return messages
+
+    def size(items: list[dict]) -> int:
+        total = 0
+        for item in items:
+            total += _approx_tokens(str(item.get("content") or ""))
+            total += 768 * len(item.get("images") or [])
+        return total
+
+    system = messages[:1]
+    current = messages[-1:]
+    history = list(messages[1:-1])
+    while history and size(system + history + current) > budget:
+        history.pop(0)
+        # Never leave an assistant reply without its user turn.
+        while history and history[0].get("role") != "user":
+            history.pop(0)
+    return system + history + current
+
+
 def _ollama_payload(
     messages: list[dict],
     *,
@@ -187,6 +230,7 @@ def _ollama_payload(
 ) -> dict:
     from . import config
 
+    messages = _trim_for_context(messages, max_new_tokens)
     return {
         "model": config.OLLAMA_MODEL,
         "messages": messages,
@@ -210,29 +254,22 @@ def _ollama_reply(
     images: list[str] | None = None,
 ) -> str:
     from . import config
-    from .progress import report
 
-    messages = build_messages(
-        text, history, system_prompt=system_prompt, images=images
+    # Use the streaming endpoint even for Telegram: a long code reply can run
+    # for several minutes, and some local HTTP stacks reset idle non-stream
+    # connections before Ollama finishes.
+    parts = list(
+        _ollama_stream_reply(
+            text,
+            history,
+            system_prompt=system_prompt,
+            max_new_tokens=config.CHAT_MAX_NEW_TOKENS,
+            temperature=0.7,
+            top_p=0.9,
+            images=images,
+        )
     )
-    payload = _ollama_payload(
-        messages,
-        stream=False,
-        max_new_tokens=config.CHAT_MAX_NEW_TOKENS,
-        temperature=0.7,
-        top_p=0.9,
-    )
-    report(2, "connecting to Ollama", label="chat")
-    report(10, "thinking", label="chat")
-    try:
-        with _ollama_request("/api/chat", payload) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:
-        raise _ollama_error(exc) from exc
-    if data.get("error"):
-        raise RuntimeError(f"Ollama error: {data['error']}")
-    report(100, "finishing", label="chat")
-    answer = ((data.get("message") or {}).get("content") or "").strip()
+    answer = "".join(parts).strip()
     return answer or "I'm not sure how to answer that."
 
 

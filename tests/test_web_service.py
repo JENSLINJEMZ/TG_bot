@@ -16,6 +16,13 @@ def _fake_stream(*args, **kwargs):
     yield "lo"
 
 
+def test_presets_allow_long_code_replies():
+    assert web_service.PRESETS["core"]["max_new_tokens"] >= 8000
+    assert web_service.PRESETS["max"]["max_new_tokens"] >= 12000
+    assert web_service.PRESETS["lite"]["max_new_tokens"] >= 2000
+    assert web_service.MAX_GENERATION_SECONDS >= 900
+
+
 def test_stream_events_and_persistence(tmp_path):
     async def scenario():
         store = WebStore(tmp_path / "web.db")
