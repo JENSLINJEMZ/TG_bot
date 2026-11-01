@@ -44,6 +44,7 @@ Everything is stored in a local SQLite database. Nothing is sent to a third-part
 | **Restyle outfit** | 1 photo + prompt | Qwen redraws from free text (e.g. `navy suit`) |
 | **Animate photo** | 1 photo + motion prompt + length | image → short MP4 |
 | **2-photo video** | 2 photos + action prompt + length | combine into one frame, then animate it |
+| **🔄 Face swap video** | 1 face photo + 1 target video | swap the face onto the video (ReActor + GFPGAN) |
 | **Chat** | text | local LLM reply (SmolLM2 or Qwen3.5-9B) |
 
 Plus: a job queue, per-user rate limiting, a live progress bar in chat, an allow-list,
@@ -237,6 +238,29 @@ image/video models run.
 See [Video](#video) for the engine-specific settings (`VIDEO_ENGINE`,
 `VIDEO_DURATIONS`, `WAN14B_*`, `COMFY_*`, …).
 
+### Face swap video
+
+The **Face swap video** mode uses the same ComfyUI server and ReActor/GFPGAN
+models as the Wan 14B identity pass. It uploads the target video, normalises it
+(trim, downscale/upscale, fixed fps), splits it into short chunks, runs the
+face swap on each chunk, then concatenates the results and re-muxes the
+original audio.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `FACESWAP_ENABLED` | `1` | enable the Face swap video button |
+| `FACESWAP_MAX_INPUT_BYTES` | `20971520` | max download size (Telegram limit is 20 MB) |
+| `FACESWAP_MAX_SECONDS` | `30` | only the first N seconds of the target are processed |
+| `FACESWAP_CHUNK_SECONDS` | `6` | one ComfyUI job per chunk (fits 8 GB VRAM) |
+| `FACESWAP_MAX_DIM` | `720` | longest edge after downscale |
+| `FACESWAP_MIN_DIM` | `480` | shortest edge after upscale (helps face detection on tiny clips) |
+| `FACESWAP_FPS` | `24` | processed frame rate |
+| `FACESWAP_FACE_RESTORE` | `1` | run GFPGAN after swap (`0` = faster, lower quality) |
+| `FACESWAP_FACE_INDEX` | `0` | which detected face to replace (`0` = largest) |
+| `FACESWAP_SWAP_MODEL` | `inswapper_128.onnx` | ReActor swap model under `COMFY_DIR\models` |
+| `FACESWAP_RESTORE_MODEL` | `GFPGANv1.4.pth` | ReActor restore model |
+| `FACESWAP_FACE_DETECT` | `retinaface_resnet50` | ReActor detector (`retinaface_resnet50`, `retinaface_mobile0.25`, `YOLOv5l`, `YOLOv5n`) |
+
 ---
 
 ## Usage
@@ -289,6 +313,13 @@ Just send a photo. Add a caption to pick the background:
 - **🖇 2-photo video** — send **two** photos → an action prompt (e.g.
   `the boy throws a ball to the girl`) → a length. The two are combined into one
   frame first, then animated, so both people act out the prompt.
+- **🔄 Face swap video** — send a clear, front-facing **face photo**, then the
+  **target video** (MP4, MOV or WebM). The bot swaps that face onto every frame
+  of the video, preserves the original audio, and returns the result as an MP4.
+  Longer clips are split into short chunks so the 8 GB GPU never runs out of
+  memory; the first `FACESWAP_MAX_SECONDS` (default 30 s) are processed. For
+  best results use a well-lit face photo and a video where the target person's
+  face is clearly visible.
 - **💬 Chat** — talk to the local model. The last few turns are kept as context.
 
 Use `/cancel` to leave a mode.

@@ -35,6 +35,7 @@ from .bgchange import (
 )
 from .diffuse import generate as diffuse_generate
 from . import edit_model
+from . import faceswap
 from . import video as video_model
 from .jobs import Job, JobQueue, QUEUE_FULL_TEXT
 from .localstore import LocalStore
@@ -71,6 +72,8 @@ class Modes(StatesGroup):
     videox_second = State()  # two-photo video: second image
     videox_prompt = State()  # two-photo video: action prompt
     videox_duration = State()  # two-photo video: clip length
+    faceswap_face = State()  # face swap: source face photo
+    faceswap_video = State()  # face swap: target video
 
 
 HELP_TEXT = (
@@ -80,6 +83,7 @@ HELP_TEXT = (
     "✨ restyle an outfit from a text prompt\n"
     "🎬 animate a photo into a short video (pick 5, 10 or 15 seconds)\n"
     "🖇 turn TWO photos into one video (both people act out your prompt)\n"
+    "🔄 swap a face photo onto an existing video\n"
     "💬 chat with the local model\n\n"
     "Use /menu to pick an operation. A photo with a color caption (\"navy\", "
     "\"#ff8800\", \"gradient red blue\", \"transparent\") still works directly.\n"
@@ -94,7 +98,7 @@ HELP_TEXT = (
 
 BOT_COMMANDS = [
     BotCommand(command="start", description="👋 Welcome and the operation menu"),
-    BotCommand(command="menu", description="🎨 Pick an operation (combine, cloth, restyle, chat, video)"),
+    BotCommand(command="menu", description="🎨 Pick an operation (combine, cloth, restyle, chat, video, face swap)"),
     BotCommand(command="help", description="❓ What this bot can do"),
     BotCommand(command="cancel", description="🛑 Stop the current operation"),
 ]
@@ -111,6 +115,7 @@ def menu_keyboard(compact: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✨ Restyle outfit", callback_data="mode_restyle")],
         [InlineKeyboardButton(text="🎬 Animate video", callback_data="mode_video")],
         [InlineKeyboardButton(text="🖇 2-photo video", callback_data="mode_videox")],
+        [InlineKeyboardButton(text="🔄 Face swap video", callback_data="mode_faceswap")],
         [InlineKeyboardButton(text="💬 Chat", callback_data="mode_chat")],
     ]
     if compact:
@@ -378,6 +383,39 @@ async def _download_photo(message: Message) -> bytes:
             f"max {config.MAX_PHOTO_BYTES // (1024 * 1024)} MB)"
         )
     return data
+
+
+async def _download_video(message: Message) -> tuple[bytes, str, str]:
+    """Download a Telegram video/document and return ``(bytes, mime, name)``."""
+    media = message.video or message.animation or message.document
+    if media is None:
+        raise ValueError("no video attached")
+    mime = (getattr(media, "mime_type", "") or "").strip().lower()
+    name = (getattr(media, "file_name", "") or "").strip() or "input.mp4"
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if message.document and not mime.startswith("video/") and ext not in (
+        "mp4", "mov", "mkv", "webm", "m4v", "avi",
+    ):
+        raise ValueError("that document is not a video")
+    size = int(getattr(media, "file_size", 0) or 0)
+    limit = config.FACESWAP_MAX_INPUT_BYTES
+    if size and size > limit:
+        raise ValueError(
+            f"video is too large ({size // (1024 * 1024)} MB, "
+            f"max {limit // (1024 * 1024)} MB)"
+        )
+    file = await message.bot.get_file(media.file_id)
+    buffer = io.BytesIO()
+    await message.bot.download(file, destination=buffer)
+    data = buffer.getvalue()
+    if len(data) > limit:
+        raise ValueError(
+            f"video is too large ({len(data) // (1024 * 1024)} MB, "
+            f"max {limit // (1024 * 1024)} MB)"
+        )
+    if not data:
+        raise ValueError("the video download was empty")
+    return data, mime or "video/mp4", name
 
 
 async def _send_result(message: Message, payload: bytes, content_type: str, caption: str) -> None:
@@ -729,6 +767,7 @@ PROGRESS_EDIT_INTERVAL = 4.0  # seconds between edits (Telegram-friendly)
 _PROGRESS_TITLES = {
     "video": "🎬 Generating clip",
     "video2": "🎬 2-photo clip",
+    "faceswap": "🔄 Swapping face",
     "cloth": "👕 Changing outfit",
     "clothing": "👕 Changing outfit",
     "combine": "🧩 Combining photos",
@@ -1302,6 +1341,203 @@ async def on_videox_duration_other(message: Message) -> None:
     if message.photo:
         return
     await message.answer("⏱ Pick the clip length from the buttons above, or reply with a number (5, 10, 15).")
+
+
+# --------------------------------------------------------------------------- #
+# face swap video: first the face photo, then the target video
+# --------------------------------------------------------------------------- #
+def _faceswap_help() -> str:
+    return (
+        "🔄 Face swap video\n"
+        "Send a clear, front-facing photo of the face you want to use.\n"
+        "Then send the target video (MP4, MOV or WebM).\n\n"
+        f"I use the first {config.FACESWAP_MAX_SECONDS}s, up to "
+        f"{config.FACESWAP_MAX_DIM}px and {config.FACESWAP_FPS} fps.\n"
+        "Only use videos of people who have given you permission."
+    )
+
+
+@dp.callback_query(F.data == "mode_faceswap")
+async def cb_mode_faceswap(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _authorized_cb(callback):
+        await callback.answer()
+        return
+    if not config.FACESWAP_ENABLED:
+        await callback.answer("🔄 Face swap video is disabled.", show_alert=True)
+        return
+    await state.set_state(Modes.faceswap_face)
+    await callback.message.edit_text(_faceswap_help())
+    await callback.answer()
+
+
+@dp.message(Modes.faceswap_face, F.photo)
+async def on_faceswap_face(message: Message, state: FSMContext) -> None:
+    if not _authorized(message) or not message.from_user or not message.photo:
+        return
+    try:
+        face = await _download_photo(message)
+    except Exception:
+        log.exception("faceswap: face photo download failed")
+        await message.answer("❌ Could not download that photo - try again.")
+        return
+    face_ext, face_type = _extension(face)
+    await state.update_data(
+        faceswap_face=face,
+        faceswap_face_ext=face_ext,
+        faceswap_face_type=face_type,
+        faceswap_face_file_id=message.photo[-1].file_id,
+    )
+    await state.set_state(Modes.faceswap_video)
+    await message.answer(
+        "✅ Got the face. Now send the target video.\n"
+        f"MP4/MOV/WebM, up to {config.FACESWAP_MAX_INPUT_BYTES // (1024 * 1024)} MB.\n"
+        "I'll keep the original audio and return the swapped clip here."
+    )
+
+
+@dp.message(Modes.faceswap_video)
+async def on_faceswap_video(message: Message, state: FSMContext) -> None:
+    if not _authorized(message) or not message.from_user:
+        return
+    if not (message.video or message.animation or message.document):
+        await message.answer("🎬 Send the target video (MP4, MOV or WebM), or /cancel to stop.")
+        return
+
+    data = await state.get_data()
+    face = data.get("faceswap_face")
+    if not face:
+        await state.clear()
+        await message.answer("⚠️ The face photo is missing - start again from /menu.")
+        return
+
+    wait = _cooldown_seconds(message)
+    if wait > 0:
+        await message.answer(f"⏳ Please wait {wait:.0f}s before the next request.")
+        return
+
+    try:
+        video, video_type, video_name = await _download_video(message)
+    except ValueError as exc:
+        await message.answer(f"⚠️ {exc}")
+        return
+    except Exception:
+        log.exception("faceswap: video download failed")
+        await message.answer("❌ Could not download that video - try again.")
+        return
+
+    ext = video_name.rsplit(".", 1)[-1].lower() if "." in video_name else "mp4"
+    if ext not in ("mp4", "mov", "mkv", "webm", "m4v", "avi"):
+        ext = "mp4"
+    await state.update_data(
+        faceswap_video=video,
+        faceswap_video_name=video_name,
+        faceswap_video_type=video_type,
+        faceswap_video_ext=ext,
+        faceswap_video_file_id=message.video.file_id if message.video else (
+            message.animation.file_id if message.animation else message.document.file_id
+        ),
+        faceswap_user_id=message.from_user.id,
+        faceswap_chat_id=message.chat.id,
+        faceswap_message_id=message.message_id,
+    )
+    await _start_faceswap_job(message, state, await state.get_data())
+
+
+async def _start_faceswap_job(
+    message: Message,
+    state: FSMContext,
+    data: dict,
+    *,
+    user_id: int | None = None,
+) -> None:
+    face = data.get("faceswap_face")
+    video = data.get("faceswap_video")
+    if not face or not video:
+        await state.set_state(Modes.faceswap_face)
+        await message.answer("⚠️ Please start again from /menu.")
+        return
+
+    face_ext = data.get("faceswap_face_ext") or "jpg"
+    face_type = data.get("faceswap_face_type") or "image/jpeg"
+    video_name = data.get("faceswap_video_name") or "input.mp4"
+    video_type = data.get("faceswap_video_type") or "video/mp4"
+    video_ext = data.get("faceswap_video_ext") or "mp4"
+    source_file_id = data.get("faceswap_video_file_id") or ""
+    chat_id = int(data.get("faceswap_chat_id") or message.chat.id)
+    owner_id = int(
+        user_id or data.get("faceswap_user_id") or (message.from_user.id if message.from_user else 0)
+    )
+    user_message_id = int(data.get("faceswap_message_id") or message.message_id)
+
+    status_holder: dict = {}
+
+    async def run() -> None:
+        await _chat_action(message, "record_video")
+        started = time.perf_counter()
+        try:
+            payload, content_type, gen_secs = await _run_tracked(
+                message,
+                status_holder,
+                "faceswap",
+                "preparing video",
+                faceswap.swap_video,
+                face,
+                video,
+                video_name,
+            )
+        except ValueError as exc:
+            log.warning("faceswap rejected input: %s", exc)
+            try:
+                await message.answer(f"⚠️ {exc}")
+            except Exception:
+                pass
+            return
+        except Exception:
+            log.exception("face swap failed")
+            try:
+                await message.answer("❌ Face swap failed - please try again later.")
+            except Exception:
+                pass
+            return
+
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        stored = await _store_media(
+            chat_id=chat_id,
+            user_id=owner_id,
+            message_id=user_message_id,
+            mode="faceswap",
+            prompt=None,
+            background_rgb=None,
+            originals=[
+                (face, face_type, face_ext),
+                (video, video_type, video_ext),
+            ],
+            result=(payload, content_type),
+            source_file_id=source_file_id,
+            elapsed_ms=elapsed_ms,
+        )
+        parts = ["face swap", f"{gen_secs:.0f}s gen", f"{elapsed_ms} ms"]
+        if stored:
+            parts.append(stored)
+        await _send_result(message, payload, content_type, " | ".join(parts))
+
+    await _submit_job(
+        message,
+        kind="faceswap",
+        run=run,
+        state=state,
+        user_id=owner_id,
+        status_holder=status_holder,
+    )
+
+
+@dp.message(Modes.faceswap_face)
+async def on_faceswap_needs_photo(message: Message) -> None:
+    if not _authorized(message):
+        return
+    if message.photo:
+        return
+    await message.answer("📷 Send the face photo first (or /cancel to stop).")
 
 
 def _run_combine_edit(

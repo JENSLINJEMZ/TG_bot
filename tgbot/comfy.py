@@ -408,6 +408,70 @@ def build_graph(
     return g
 
 
+def build_faceswap_graph(
+    *,
+    face_image: str,
+    video_name: str,
+    fps: float,
+    face_index: str | None = None,
+) -> dict:
+    """Build a ReActor graph that swaps ``face_image`` onto every video frame.
+
+    The uploaded video is staged in ComfyUI's *input* root so the Video Helper
+    Suite upload node can see it.  ``fps`` is the already-normalised frame rate
+    (the bot pre-processes the clip with ffmpeg); audio is re-muxed by the bot
+    after all chunks finish, so the graph itself is video-only.
+    """
+    restore = config.FACESWAP_RESTORE_MODEL if config.FACESWAP_FACE_RESTORE else "none"
+    index = (face_index or config.FACESWAP_FACE_INDEX or "0").strip() or "0"
+    g: dict[str, dict] = {}
+
+    g["1"] = {"class_type": "LoadImage", "inputs": {"image": face_image}}
+    g["2"] = {
+        "class_type": "VHS_LoadVideo",
+        "inputs": {
+            "video": video_name,
+            "force_rate": 0,
+            "custom_width": 0,
+            "custom_height": 0,
+            "frame_load_cap": 0,
+            "skip_first_frames": 0,
+            "select_every_nth": 1,
+        },
+    }
+    g["60"] = {
+        "class_type": "ReActorFaceSwap",
+        "inputs": {
+            "enabled": True,
+            "input_image": ["2", 0],
+            "swap_model": config.FACESWAP_SWAP_MODEL,
+            "facedetection": config.FACESWAP_FACE_DETECT,
+            "face_restore_model": restore,
+            "face_restore_visibility": 1.0,
+            "codeformer_weight": 0.5,
+            "detect_gender_input": "no",
+            "detect_gender_source": "no",
+            "input_faces_index": index,
+            "source_faces_index": "0",
+            "console_log_level": 1,
+            "source_image": ["1", 0],
+        },
+    }
+    g["90"] = {
+        "class_type": "VHS_VideoCombine",
+        "inputs": {
+            "images": ["60", 0],
+            "frame_rate": float(max(1.0, fps)),
+            "loop_count": 0,
+            "filename_prefix": "tgbot/faceswap",
+            "format": "video/h264-mp4",
+            "pingpong": False,
+            "save_output": True,
+        },
+    }
+    return g
+
+
 # --------------------------------------------------------------------------- #
 # queue / poll / fetch
 # --------------------------------------------------------------------------- #
@@ -475,6 +539,31 @@ def fetch(filename: str, subfolder: str, file_type: str) -> bytes:
         {"filename": filename, "subfolder": subfolder, "type": file_type}
     )
     return _http(f"/view?{query}", timeout=300.0)
+
+
+def run_graph(
+    graph: dict,
+    *,
+    timeout: float | None = None,
+    stage: str = "loading models",
+) -> bytes:
+    """Queue ``graph``, mirror its progress, wait and return the first output file.
+
+    This is the small public wrapper used by non-Wan graphs (currently the
+    face-swap graph) so they get the same WebSocket progress and timeout
+    handling as :func:`generate`.
+    """
+    prompt_id = queue(graph)
+    TRACKER.update(stage=stage, prompt_id=prompt_id)
+    watcher = _ProgressWatcher(prompt_id, _build_plan(graph))
+    if watcher.plan:
+        watcher.start()
+    try:
+        outputs = wait_for(prompt_id, timeout=timeout or config.COMFY_TIMEOUT)
+    finally:
+        watcher.stop()
+    filename, subfolder, file_type = _find_output_file(outputs)
+    return fetch(filename, subfolder, file_type)
 
 
 # --------------------------------------------------------------------------- #

@@ -217,6 +217,36 @@ WAN14B_RIFE_MODEL = os.getenv("WAN14B_RIFE_MODEL", "rife49.pth").strip()
 # 0 = pick a fresh random seed per job
 WAN14B_SEED = int(os.getenv("WAN14B_SEED", "0") or "0")
 
+# --- face swap a photo onto a video (Telegram "Face swap video") ---
+# Uses the same ComfyUI server, ReActor swap model and GFPGAN restore as the
+# wan14b identity pass, but reads the target frames from the uploaded video.
+FACESWAP_ENABLED = VIDEO_ENABLED and os.getenv("FACESWAP_ENABLED", "1").strip() != "0"
+# Telegram bots can download at most 20 MB through getFile; keep the default safe.
+FACESWAP_MAX_INPUT_BYTES = max(
+    1, int(os.getenv("FACESWAP_MAX_INPUT_BYTES", str(20 * 1024 * 1024)) or "0")
+)
+# Trim the target to this many seconds (the first part is used).  Chunking keeps
+# each ComfyUI job small enough for an 8 GB card, so longer clips are fine.
+FACESWAP_MAX_SECONDS = max(1, int(os.getenv("FACESWAP_MAX_SECONDS", "30") or "30"))
+# One ComfyUI job per chunk; 6 s at 24 fps is ~144 frames at 720p.
+FACESWAP_CHUNK_SECONDS = max(1, int(os.getenv("FACESWAP_CHUNK_SECONDS", "6") or "6"))
+# Downscale the target so its longest edge is at most this many pixels.
+FACESWAP_MAX_DIM = max(256, int(os.getenv("FACESWAP_MAX_DIM", "720") or "720"))
+# Upscale small videos so the shortest edge is at least this many pixels
+# (helps face detection on low-resolution uploads).
+FACESWAP_MIN_DIM = max(128, int(os.getenv("FACESWAP_MIN_DIM", "480") or "480"))
+# Cap the processed frame rate (24 keeps 6 s chunks small and motion natural).
+FACESWAP_FPS = max(1, int(os.getenv("FACESWAP_FPS", "24") or "24"))
+# ReActor settings (fall back to the Wan 14B identity-pass names).
+FACESWAP_SWAP_MODEL = os.getenv("FACESWAP_SWAP_MODEL", WAN14B_SWAP_MODEL).strip()
+FACESWAP_RESTORE_MODEL = os.getenv(
+    "FACESWAP_RESTORE_MODEL", WAN14B_RESTORE_MODEL
+).strip()
+FACESWAP_FACE_DETECT = os.getenv("FACESWAP_FACE_DETECT", WAN14B_FACE_DETECT).strip()
+FACESWAP_FACE_RESTORE = os.getenv("FACESWAP_FACE_RESTORE", "1").strip() != "0"
+# Which detected face to replace ("0" = the largest/first face).
+FACESWAP_FACE_INDEX = os.getenv("FACESWAP_FACE_INDEX", "0").strip() or "0"
+
 # normalize the frame count to the active engine's temporal stride:
 # LTX needs frames = 8*k + 1, Wan needs frames = 4*k + 1 (121 satisfies both).
 _VIDEO_STRIDE = 8 if VIDEO_ENGINE == "ltx" else 4
